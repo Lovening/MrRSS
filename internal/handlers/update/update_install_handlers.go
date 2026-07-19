@@ -40,6 +40,7 @@ func HandleInstallUpdate(h *core.Handler, w http.ResponseWriter, r *http.Request
 
 	var req struct {
 		FilePath string `json:"file_path"`
+		Silent   bool   `json:"silent"`
 	}
 
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -109,10 +110,16 @@ func HandleInstallUpdate(h *core.Handler, w http.ResponseWriter, r *http.Request
 				response.Error(w, fmt.Errorf("invalid file type for Windows"), http.StatusBadRequest)
 				return
 			}
-			// Use start command with /B flag to launch in background
-			// Format: start /B <executable_path>
-			// The /B flag prevents creating a new window
-			cmd = exec.Command("cmd.exe", "/C", "start", "/B", cleanPath)
+			// Launch the installer directly. Starting it through cmd.exe creates a
+			// transient console window because MrRSS is built as a GUI application.
+			// NSIS skips its pages (including the "launch MrRSS" finish action) in
+			// silent mode, so an automatic update cannot create a blank second
+			// application window. Manual updates continue to show the installer UI.
+			args := []string{}
+			if req.Silent {
+				args = append(args, "/S")
+			}
+			cmd = exec.Command(cleanPath, args...)
 			scheduleCleanup(cleanPath, 10*time.Second)
 		case "linux":
 			// Make AppImage executable and run it - validate file extension

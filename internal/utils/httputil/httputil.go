@@ -19,6 +19,42 @@ import (
 // opt-in and environment-scoped.
 const InsecureSkipTLSVerifyEnv = "MRRSS_INSECURE_SKIP_TLS_VERIFY"
 
+// SettingsProvider provides access to application settings used by HTTP utilities.
+type SettingsProvider interface {
+	GetSetting(key string) (string, error)
+	GetEncryptedSetting(key string) (string, error)
+}
+
+// BuildGlobalProxyURL constructs the configured global proxy URL from settings.
+func BuildGlobalProxyURL(settings SettingsProvider) string {
+	if settings == nil {
+		return ""
+	}
+
+	proxyEnabled, _ := settings.GetSetting("proxy_enabled")
+	if proxyEnabled != "true" {
+		return ""
+	}
+
+	proxyType, _ := settings.GetSetting("proxy_type")
+	proxyHost, _ := settings.GetSetting("proxy_host")
+	proxyPort, _ := settings.GetSetting("proxy_port")
+	proxyUsername, _ := settings.GetEncryptedSetting("proxy_username")
+	proxyPassword, _ := settings.GetEncryptedSetting("proxy_password")
+
+	return BuildProxyURL(proxyType, proxyHost, proxyPort, proxyUsername, proxyPassword)
+}
+
+// CreateHTTPClientFromSettings creates an HTTP client using the global proxy if enabled.
+func CreateHTTPClientFromSettings(settings SettingsProvider, timeout time.Duration) (*http.Client, error) {
+	return CreateHTTPClient(BuildGlobalProxyURL(settings), timeout)
+}
+
+// CreateHTTPClientWithUserAgentFromSettings creates an HTTP client using the global proxy if enabled and adds a User-Agent.
+func CreateHTTPClientWithUserAgentFromSettings(settings SettingsProvider, timeout time.Duration, userAgent string) (*http.Client, error) {
+	return CreateHTTPClientWithUserAgent(BuildGlobalProxyURL(settings), timeout, userAgent)
+}
+
 // BuildProxyURL constructs a proxy URL from settings.
 func BuildProxyURL(proxyType, proxyHost, proxyPort, username, password string) string {
 	if proxyHost == "" || proxyPort == "" {

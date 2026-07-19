@@ -1,5 +1,9 @@
 version: '3'
 
+# Auto-load local dev environment (e.g. HTTP(S)_PROXY / GOPROXY).
+# Safe no-op when .env is absent. .env is gitignored.
+dotenv: ['.env']
+
 includes:
   common: ./build/Taskfile.yml
   windows: ./build/windows/Taskfile.yml

@@ -206,6 +206,7 @@ func (h *Handler) FetchFullArticleContentWithFeed(articleURL string, feedConfig 
 	req.Header.Set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
 	req.Header.Set("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8")
 	req.Header.Set("Accept-Language", "en-US,en;q=0.9,zh-CN;q=0.8,zh;q=0.7")
+	req.Header.Set("DNT", "1")
 
 	resp, err := client.Do(req)
 	if err != nil {
@@ -213,8 +214,8 @@ func (h *Handler) FetchFullArticleContentWithFeed(articleURL string, feedConfig 
 	}
 	defer resp.Body.Close()
 
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return "", fmt.Errorf("fetch page: HTTP %d", resp.StatusCode)
+	if resp.StatusCode < http.StatusOK || resp.StatusCode >= http.StatusMultipleChoices {
+		return "", fmt.Errorf("fetch page: HTTP %d: %s", resp.StatusCode, resp.Status)
 	}
 
 	article, err := readability.FromReader(resp.Body, parsedURL)

@@ -20,6 +20,8 @@ import (
 	"github.com/mmcdole/gofeed"
 )
 
+const browserUserAgent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+
 // FeedParser interface to allow mocking
 type FeedParser interface {
 	ParseURL(url string) (*gofeed.Feed, error)
@@ -52,7 +54,7 @@ func NewFetcher(db *database.DB) *Fetcher {
 	httpClient, err := httputil.CreateHTTPClientWithUserAgent(
 		"",
 		30*time.Second,
-		"Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+		browserUserAgent,
 	)
 	if err != nil {
 		// Fallback to default client if proxy setup fails
@@ -160,37 +162,58 @@ func (f *Fetcher) getConcurrencyLimit() int {
 // getHTTPClient returns an HTTP client configured with proxy if needed
 // Proxy precedence (highest to lowest):
 // 1. Feed custom proxy (ProxyEnabled=true, ProxyURL != "")
-// 2. Global proxy (ProxyEnabled=true, ProxyURL == "", global proxy_enabled=true)
-// 3. No proxy (ProxyEnabled=false or no global proxy)
+// 2. Global proxy (global proxy_enabled=true)
+// 3. No proxy (no custom proxy and global proxy disabled)
 func (f *Fetcher) getHTTPClient(feed models.Feed) (*http.Client, error) {
-	var proxyURL string
+	proxyURL := httputil.BuildGlobalProxyURL(f.db)
 
-	// Check feed-level proxy settings
+	// Feed-specific custom proxy has the highest priority.
 	if feed.ProxyEnabled && feed.ProxyURL != "" {
-		// Feed has custom proxy configured - highest priority
 		proxyURL = feed.ProxyURL
-	} else if feed.ProxyEnabled {
-		// Feed requests to use global proxy
-		proxyEnabled, _ := f.db.GetSetting("proxy_enabled")
-		if proxyEnabled == "true" {
-			// Build global proxy URL from settings (use encrypted methods for credentials)
-			proxyType, _ := f.db.GetSetting("proxy_type")
-			proxyHost, _ := f.db.GetSetting("proxy_host")
-			proxyPort, _ := f.db.GetSetting("proxy_port")
-			proxyUsername, _ := f.db.GetEncryptedSetting("proxy_username")
-			proxyPassword, _ := f.db.GetEncryptedSetting("proxy_password")
-			proxyURL = BuildProxyURL(proxyType, proxyHost, proxyPort, proxyUsername, proxyPassword)
-		}
 	}
-	// If ProxyEnabled=false, proxyURL remains empty (no proxy)
 
 	// Create HTTP client with browser-like headers to bypass Cloudflare and anti-bot protections
 	// This is critical for RSSHub feeds and other services with anti-bot protection
 	return httputil.CreateHTTPClientWithUserAgent(
 		proxyURL,
 		30*time.Second,
-		"Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+		browserUserAgent,
 	)
+}
+
+func (f *Fetcher) newParserForFeed(feed models.Feed) (*gofeed.Parser, error) {
+	client, err := f.getHTTPClient(feed)
+	if err != nil {
+		return nil, err
+	}
+
+	parser := gofeed.NewParser()
+	parser.Client = client
+	return parser, nil
+}
+
+func (f *Fetcher) parseURLForFeed(url string, feed models.Feed) (*gofeed.Feed, error) {
+	if _, ok := f.fp.(*gofeed.Parser); !ok {
+		return f.fp.ParseURL(url)
+	}
+
+	parser, err := f.newParserForFeed(feed)
+	if err != nil {
+		return nil, err
+	}
+	return parser.ParseURL(url)
+}
+
+func (f *Fetcher) parseURLWithContextForFeed(url string, ctx context.Context, feed models.Feed) (*gofeed.Feed, error) {
+	if _, ok := f.fp.(*gofeed.Parser); !ok {
+		return f.fp.ParseURLWithContext(url, ctx)
+	}
+
+	parser, err := f.newParserForFeed(feed)
+	if err != nil {
+		return nil, err
+	}
+	return parser.ParseURLWithContext(url, ctx)
 }
 
 func (f *Fetcher) FetchAll(ctx context.Context) {

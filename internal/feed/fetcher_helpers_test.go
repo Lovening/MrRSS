@@ -90,9 +90,23 @@ func TestGetHTTPClientProxyPrecedence(t *testing.T) {
 		t.Fatalf("getHTTPClient error: %v", err)
 	}
 	tr3 := getTransport(client3)
-	if tr3.Proxy != nil {
-		if pu3, _ := tr3.Proxy(&http.Request{URL: &url.URL{Scheme: "http", Host: "example.com"}}); pu3 != nil {
-			t.Fatalf("expected no proxy when disabled, got %v", pu3)
+	if tr3.Proxy == nil {
+		t.Fatalf("expected global proxy even when feed proxy is disabled")
+	}
+	pu3, _ := tr3.Proxy(&http.Request{URL: &url.URL{Scheme: "http", Host: "example.com"}})
+	if pu3 == nil || pu3.Host == "" {
+		t.Fatalf("unexpected global proxy url for disabled feed proxy: %v", pu3)
+	}
+
+	db.SetSetting("proxy_enabled", "false")
+	client4, err := f.getHTTPClient(models.Feed{ProxyEnabled: false})
+	if err != nil {
+		t.Fatalf("getHTTPClient error: %v", err)
+	}
+	tr4 := getTransport(client4)
+	if tr4.Proxy != nil {
+		if pu4, _ := tr4.Proxy(&http.Request{URL: &url.URL{Scheme: "http", Host: "example.com"}}); pu4 != nil {
+			t.Fatalf("expected no proxy when global proxy is disabled, got %v", pu4)
 		}
 	}
 }

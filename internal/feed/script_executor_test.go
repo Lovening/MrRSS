@@ -130,6 +130,7 @@ func TestFindPythonExecutable(t *testing.T) {
 
 	// Test that the found executable actually works
 	cmd := exec.CommandContext(ctx, pythonCmd, "--version")
+	hideScriptWindow(cmd)
 	err = cmd.Run()
 	if err != nil {
 		t.Errorf("Found Python executable '%s' failed to run: %v", pythonCmd, err)

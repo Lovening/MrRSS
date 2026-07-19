@@ -729,6 +729,9 @@ export const useAppStore = defineStore('app', () => {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           file_path: downloadData.file_path,
+          // Automatic updates must not show the NSIS installer or launch a
+          // second MrRSS window from the installer's finish page.
+          silent: true,
         }),
       });
 

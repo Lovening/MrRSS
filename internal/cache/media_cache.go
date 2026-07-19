@@ -18,10 +18,16 @@ import (
 // MediaCache handles caching of images and videos to work around anti-hotlinking
 type MediaCache struct {
 	cacheDir string
+	client   *http.Client
 }
 
 // NewMediaCache creates a new media cache instance
 func NewMediaCache(cacheDir string) (*MediaCache, error) {
+	return NewMediaCacheWithClient(cacheDir, nil)
+}
+
+// NewMediaCacheWithClient creates a new media cache instance with an optional HTTP client.
+func NewMediaCacheWithClient(cacheDir string, client *http.Client) (*MediaCache, error) {
 	// Create cache directory if it doesn't exist
 	if err := os.MkdirAll(cacheDir, 0755); err != nil {
 		return nil, fmt.Errorf("failed to create cache directory: %w", err)
@@ -29,6 +35,7 @@ func NewMediaCache(cacheDir string) (*MediaCache, error) {
 
 	return &MediaCache{
 		cacheDir: cacheDir,
+		client:   client,
 	}, nil
 }
 
@@ -109,8 +116,11 @@ func (mc *MediaCache) Get(url, referer string) ([]byte, string, error) {
 
 // download fetches media from the given URL with proper headers
 func (mc *MediaCache) download(url, referer string) ([]byte, string, error) {
-	client := &http.Client{
-		Timeout: 30 * time.Second,
+	client := mc.client
+	if client == nil {
+		client = &http.Client{
+			Timeout: 30 * time.Second,
+		}
 	}
 
 	req, err := http.NewRequest("GET", url, nil)

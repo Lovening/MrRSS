@@ -30,6 +30,7 @@ func findPythonExecutable(ctx context.Context) (string, error) {
 
 	for _, candidate := range candidates {
 		cmd := exec.CommandContext(ctx, candidate, "--version")
+		hideScriptWindow(cmd)
 		if err := cmd.Run(); err == nil {
 			return candidate, nil
 		}
@@ -82,7 +83,17 @@ func (e *ScriptExecutor) ExecuteScript(ctx context.Context, scriptPath string) (
 		if runtime.GOOS != "windows" {
 			cmd = exec.CommandContext(execCtx, "pwsh", "-File", fullPath)
 		} else {
-			cmd = exec.CommandContext(execCtx, "powershell.exe", "-ExecutionPolicy", "Bypass", "-File", fullPath)
+			// -WindowStyle Hidden prevents powershell.exe from creating a visible
+			// console window. -NoProfile and -NonInteractive ensure user profile
+			// scripts cannot create their own window or wait for user input.
+			cmd = exec.CommandContext(execCtx, "powershell.exe",
+				"-NoLogo",
+				"-NoProfile",
+				"-NonInteractive",
+				"-WindowStyle", "Hidden",
+				"-ExecutionPolicy", "Bypass",
+				"-File", fullPath,
+			)
 		}
 	case ".js":
 		// Node.js script
@@ -97,6 +108,7 @@ func (e *ScriptExecutor) ExecuteScript(ctx context.Context, scriptPath string) (
 
 	// Set working directory to the scripts directory
 	cmd.Dir = e.scriptsDir
+	hideScriptWindow(cmd)
 
 	// Capture stdout and stderr
 	var stdout, stderr bytes.Buffer
