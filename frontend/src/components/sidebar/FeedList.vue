@@ -663,7 +663,9 @@ function handleFilterDragEnd() {
           </div>
 
           <!-- Categories List -->
-          <div class="categories-list flex-1 overflow-y-auto overflow-x-hidden">
+          <div
+            class="categories-list sidebar-hover-scrollbar flex-1 overflow-y-auto overflow-x-hidden"
+          >
             <SidebarCategory
               v-for="(data, name) in filteredTree.tree"
               :key="name"
@@ -779,7 +781,7 @@ function handleFilterDragEnd() {
             <!-- Saved Filters List -->
             <div
               :class="[
-                'flex-1 overflow-y-auto min-h-0',
+                'sidebar-hover-scrollbar flex-1 overflow-y-auto min-h-0',
                 compactMode ? 'py-0.5 sm:py-1' : 'pt-1 pb-1 sm:pt-1.5 sm:pb-1.5',
               ]"
             >
@@ -827,25 +829,36 @@ function handleFilterDragEnd() {
 </template>
 
 <style scoped>
-.categories-list {
-  /* Force scrollbar to always be visible */
+.sidebar-hover-scrollbar {
   scrollbar-gutter: stable;
+  scrollbar-width: thin;
+  scrollbar-color: transparent transparent;
 }
 
-.categories-list::-webkit-scrollbar {
+.sidebar-hover-scrollbar:hover,
+.sidebar-hover-scrollbar:focus-within {
+  scrollbar-color: var(--border-color) transparent;
+}
+
+.sidebar-hover-scrollbar::-webkit-scrollbar {
   width: 6px;
 }
 
-.categories-list::-webkit-scrollbar-track {
+.sidebar-hover-scrollbar::-webkit-scrollbar-track {
   background: transparent;
 }
 
-.categories-list::-webkit-scrollbar-thumb {
-  background: var(--border-color);
+.sidebar-hover-scrollbar::-webkit-scrollbar-thumb {
+  background: transparent;
   border-radius: 3px;
 }
 
-.categories-list::-webkit-scrollbar-thumb:hover {
+.sidebar-hover-scrollbar:hover::-webkit-scrollbar-thumb,
+.sidebar-hover-scrollbar:focus-within::-webkit-scrollbar-thumb {
+  background: var(--border-color);
+}
+
+.sidebar-hover-scrollbar::-webkit-scrollbar-thumb:hover {
   background: var(--text-secondary);
 }
 
@@ -859,11 +872,12 @@ function handleFilterDragEnd() {
 </style>
 
 <style>
-.dark-mode .categories-list::-webkit-scrollbar-thumb {
+.dark-mode .sidebar-hover-scrollbar:hover::-webkit-scrollbar-thumb,
+.dark-mode .sidebar-hover-scrollbar:focus-within::-webkit-scrollbar-thumb {
   background: #444;
 }
 
-.dark-mode .categories-list::-webkit-scrollbar-thumb:hover {
+.dark-mode .sidebar-hover-scrollbar::-webkit-scrollbar-thumb:hover {
   background: #666;
 }
 </style>

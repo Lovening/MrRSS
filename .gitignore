@@ -48,6 +48,7 @@ go.work.sum
 build/bin/
 build/dmg/
 build/appimage/
+build/skills/
 build/appimagetool-x86_64.AppImage
 dist/
 wailsjs/wailsjs/runtime/

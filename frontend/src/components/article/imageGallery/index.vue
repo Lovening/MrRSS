@@ -365,11 +365,9 @@ function handleContextMenu(event: MouseEvent, article: Article): void {
 function openArticleDetail(): void {
   if (!selectedArticle.value) return;
 
-  // Set the article's feed as current
-  store.currentFeedId = selectedArticle.value.feed_id;
+  const article = selectedArticle.value;
 
-  // Switch to 'all' filter to exit image gallery mode and show article detail
-  store.setFilter('all');
+  store.selectFeedInArticleList(article.feed_id, article.id);
 
   // Close the image viewer
   closeImageViewer();

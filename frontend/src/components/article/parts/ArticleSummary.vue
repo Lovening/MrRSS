@@ -93,6 +93,21 @@ const shouldShowManualTrigger = computed(() => {
   );
 });
 
+const shouldReserveAutoSummary = computed(() => {
+  if (props.summaryResult || props.isLoadingSummary || props.isLoadingContent) return false;
+  if (props.summaryProvider === 'ai') return props.summaryTriggerMode === 'auto';
+  return props.summaryProvider === 'local' || props.summaryProvider === 'rss';
+});
+
+const shouldShowSummaryContainer = computed(() => {
+  return (
+    !!props.summaryResult ||
+    props.isLoadingSummary ||
+    shouldShowManualTrigger.value ||
+    shouldReserveAutoSummary.value
+  );
+});
+
 // Generate summary on button click
 function handleGenerateSummary() {
   emit('generate-summary');
@@ -151,7 +166,7 @@ async function handleSummaryLinkClick(event: MouseEvent) {
 <template>
   <!-- Summary Section -->
   <div
-    v-if="summaryResult || isLoadingSummary || shouldShowManualTrigger"
+    v-if="shouldShowSummaryContainer"
     class="summary-container mb-4 p-3 rounded-lg border border-border bg-bg-secondary"
   >
     <!-- Summary Header -->
@@ -199,7 +214,10 @@ async function handleSummaryLinkClick(event: MouseEvent) {
     <Transition name="summary-content">
       <div v-if="showSummary" class="summary-content mt-3">
         <!-- Loading State -->
-        <div v-if="isLoadingSummary" class="flex flex-col items-center gap-3 py-4">
+        <div
+          v-if="isLoadingSummary || shouldReserveAutoSummary"
+          class="summary-loading-state flex flex-col items-center justify-center gap-3 py-4"
+        >
           <PhSpinnerGap :size="24" class="animate-spin text-accent" />
           <div class="text-sm text-text-primary">
             {{
@@ -289,6 +307,18 @@ async function handleSummaryLinkClick(event: MouseEvent) {
 </template>
 
 <style scoped>
+.summary-container {
+  min-height: 8rem;
+  transition:
+    min-height 0.2s ease,
+    background-color 0.2s ease,
+    border-color 0.2s ease;
+}
+
+.summary-loading-state {
+  min-height: 4.75rem;
+}
+
 /* Content Transitions */
 .summary-content-enter-active,
 .summary-content-leave-active {

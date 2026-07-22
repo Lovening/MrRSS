@@ -14,7 +14,6 @@ export function useMasonryLayout(articles: { value: Article[] }): MasonryLayoutR
   const columns = ref<Article[][]>([]);
   const columnCount = ref(4);
   const containerRef = ref<HTMLElement | null>(null);
-  // eslint-disable-next-line no-undef
   let resizeObserver: ResizeObserver | null = null;
   let isObserverSetup = false;
 
@@ -47,7 +46,6 @@ export function useMasonryLayout(articles: { value: Article[] }): MasonryLayoutR
       (el) => {
         if (el && !isObserverSetup) {
           // Set up the observer
-          // eslint-disable-next-line no-undef
           resizeObserver = new ResizeObserver(() => {
             calculateColumns();
           });

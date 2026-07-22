@@ -8,7 +8,7 @@
    <a href="README.md">English</a> | <strong>简体中文</strong>
 </p>
 
-[![Version](https://img.shields.io/badge/version-1.3.24-blue.svg)](https://github.com/WCY-dt/MrRSS/releases)
+[![Version](https://img.shields.io/badge/version-1.3.25-blue.svg)](https://github.com/WCY-dt/MrRSS/releases)
 [![License](https://img.shields.io/badge/license-GPLv3-green.svg)](LICENSE)
 [![Go](https://img.shields.io/badge/Go-1.25+-00ADD8?logo=go)](https://go.dev/)
 [![Wails](https://img.shields.io/badge/Wails-v3%20alpha-red)](https://wails.io/)
@@ -17,7 +17,7 @@
 ## ✨ 功能特性
 
 - 🌐 **自动翻译与摘要**: 自动翻译文章标题与正文，并生成简洁的内容摘要，助你快速获取信息
-- 🤖 **AI 增强功能**: 集成先进 AI 技术，赋能翻译、摘要、推荐等多种功能，让阅读更智能
+- 🤖 **AI 增强功能**: 集成先进 AI 技术，赋能翻译、摘要、推荐等多种功能，并支持通过 skill 读取与操作
 - 🔌 **丰富的插件生态**: 支持 Obsidian、Notion、FreshRSS、RSSHub 等主流工具集成，轻松扩展功能
 - 📡 **多样化订阅方式**: 支持 URL、XPath、脚本、Newsletter 等多种订阅源类型，满足不同需求
 - 🏭 **自定义脚本与自动化**: 内置过滤器与脚本系统，支持高度自定义的自动化流程
@@ -48,6 +48,10 @@
 - **Linux:** `MrRSS-{version}-linux-{arch}-portable.tar.gz`
 - **macOS:** `MrRSS-{version}-darwin-{arch}-portable.zip`
 
+**AI Agent Skills：**
+
+- **Codex:** `MrRSS-{version}-skills.zip`（[使用说明](docs/SKILLS.zh.md)）
+
 </div>
 
 </details>
@@ -70,7 +74,7 @@
 
 **平台特定要求：**
 
-- **Linux**: GTK3、WebKit2GTK 4.1、libsoup 3.0、GCC、pkg-config
+- **Linux**: GTK4、WebKitGTK 6.0、libsoup 3.0、GCC、pkg-config
 - **Windows**: MinGW-w64（用于 CGO 支持）、NSIS（用于安装包）
 - **macOS**: Xcode 命令行工具
 
@@ -78,7 +82,7 @@
 
 ```bash
 # Linux 快速设置（Ubuntu 24.04+）：
-sudo apt-get install libgtk-3-dev libwebkit2gtk-4.1-dev libsoup-3.0-dev gcc pkg-config
+sudo apt-get install libgtk-4-dev libwebkitgtk-6.0-dev libsoup-3.0-dev gcc pkg-config
 ```
 
 ##### 安装步骤
@@ -101,7 +105,7 @@ sudo apt-get install libgtk-3-dev libwebkit2gtk-4.1-dev libsoup-3.0-dev gcc pkg-
 3. **安装 Wails v3 CLI**
 
    ```bash
-   go install github.com/wailsapp/wails/v3/cmd/wails3@latest
+   go install github.com/wailsapp/wails/v3/cmd/wails3@v3.0.0-alpha2.117
    ```
 
 4. **构建应用**
@@ -232,6 +236,7 @@ docker run -d -p 1234:1234 ghcr.io/wcy-dt/mrrss:latest-arm64
 ```
 
 请参阅[服务器模式 API 文档](docs/SERVER_MODE/swagger.json)以获取完整的 API 参考。
+如需让 Codex 通过该 API 操作 MrRSS，请安装 release 中的 skills 包，详见 [MrRSS Skills](docs/SKILLS.zh.md)。
 
 </div>
 
