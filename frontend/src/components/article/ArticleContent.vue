@@ -68,6 +68,10 @@ const { settings: appSettings, fetchSettings } = useSettings();
 const store = useAppStore();
 const isChatPanelOpen = ref(false);
 const articleScrollContainer = ref<HTMLElement | null>(null);
+const ARTICLE_SCROLL_POSITIONS_KEY = 'mrrssArticleScrollPositions';
+let scrollSaveTimer: ReturnType<typeof setTimeout> | null = null;
+let pendingScrollRestoreArticleId: number | null = null;
+let pendingScrollRestoreAttempts = 0;
 
 // Full-text fetching state
 const isFetchingFullArticle = ref(false);
@@ -186,6 +190,78 @@ const isTranslatingContent = ref(false);
 const lastTranslatedArticleId = ref<number | null>(null);
 const lastTranslatedContentHash = ref<string>(''); // Track translated content by hash
 const translationSkipped = ref(false);
+
+function loadArticleScrollPositions(): Record<string, number> {
+  try {
+    const raw = localStorage.getItem(ARTICLE_SCROLL_POSITIONS_KEY);
+    if (!raw) return {};
+    const parsed = JSON.parse(raw);
+    return parsed && typeof parsed === 'object' ? parsed : {};
+  } catch {
+    return {};
+  }
+}
+
+function saveArticleScrollPosition(articleId: number | null | undefined = props.article?.id) {
+  const container = articleScrollContainer.value;
+  if (!container || !articleId) return;
+
+  const positions = loadArticleScrollPositions();
+  positions[String(articleId)] = Math.round(container.scrollTop);
+
+  const entries = Object.entries(positions);
+  if (entries.length > 200) {
+    const trimmed = Object.fromEntries(entries.slice(entries.length - 200));
+    localStorage.setItem(ARTICLE_SCROLL_POSITIONS_KEY, JSON.stringify(trimmed));
+    return;
+  }
+
+  localStorage.setItem(ARTICLE_SCROLL_POSITIONS_KEY, JSON.stringify(positions));
+}
+
+function scheduleSaveArticleScrollPosition() {
+  if (pendingScrollRestoreArticleId === props.article?.id) {
+    return;
+  }
+
+  if (scrollSaveTimer) {
+    clearTimeout(scrollSaveTimer);
+  }
+  scrollSaveTimer = setTimeout(() => {
+    saveArticleScrollPosition();
+    scrollSaveTimer = null;
+  }, 200);
+}
+
+function restoreArticleScrollPosition(articleId: number | null | undefined = props.article?.id) {
+  const container = articleScrollContainer.value;
+  if (!container || !articleId) return;
+
+  const savedTop = loadArticleScrollPositions()[String(articleId)];
+  if (savedTop === undefined) {
+    pendingScrollRestoreArticleId = null;
+    pendingScrollRestoreAttempts = 0;
+    return;
+  }
+
+  window.requestAnimationFrame(() => {
+    const maxScrollTop = Math.max(0, container.scrollHeight - container.clientHeight);
+    container.scrollTop = Math.min(savedTop, maxScrollTop);
+
+    pendingScrollRestoreAttempts += 1;
+    if (maxScrollTop >= savedTop || savedTop === 0 || pendingScrollRestoreAttempts >= 5) {
+      pendingScrollRestoreArticleId = null;
+      pendingScrollRestoreAttempts = 0;
+    }
+  });
+}
+
+async function restorePendingArticleScrollPosition() {
+  if (!pendingScrollRestoreArticleId || pendingScrollRestoreArticleId !== props.article?.id) return;
+
+  await nextTick();
+  restoreArticleScrollPosition(pendingScrollRestoreArticleId);
+}
 
 // Load settings using composables
 async function loadSettings() {
@@ -719,10 +795,16 @@ watch(
   () => props.article?.id,
   async (newId, oldId) => {
     if (newId !== oldId) {
+      if (oldId !== undefined) {
+        saveArticleScrollPosition(oldId);
+      }
+
       // Scroll to top when switching articles
       if (articleScrollContainer.value) {
         articleScrollContainer.value.scrollTop = 0;
       }
+      pendingScrollRestoreArticleId = newId ?? null;
+      pendingScrollRestoreAttempts = 0;
 
       // Cancel any ongoing summary generation for the previous article
       if (oldId !== undefined) {
@@ -754,6 +836,8 @@ watch(
             setTimeout(() => generateSummary(props.article), 100);
           }
         }
+
+        await restorePendingArticleScrollPosition();
 
         // Translate title
         if (translationEnabled.value) {
@@ -804,6 +888,7 @@ watch(
 
       // Re-attach image and link event listeners after rendering enhancements
       await reattachContentInteractions();
+      await restorePendingArticleScrollPosition();
 
       // Auto-fetch full article if setting is enabled
       // Don't auto-fetch if we're already fetching
@@ -840,6 +925,9 @@ watch(
 onMounted(async () => {
   await loadSettings();
   if (props.article) {
+    pendingScrollRestoreArticleId = props.article.id;
+    pendingScrollRestoreAttempts = 0;
+
     // Check for cached summary first
     if (props.article.summary && props.article.summary.trim() !== '') {
       // Load the cached summary by calling API to get HTML
@@ -871,6 +959,7 @@ onMounted(async () => {
       enhanceRendering('.prose-content');
       // Re-attach image and link event listeners after rendering
       await reattachContentInteractions();
+      await restorePendingArticleScrollPosition();
 
       // Auto-fetch full article if setting is enabled and content is already loaded
       if (
@@ -892,6 +981,7 @@ watch(
       // Wait for v-html to update the DOM before attaching event listeners
       await nextTick();
       await reattachContentInteractions();
+      await restorePendingArticleScrollPosition();
     }
   },
   { immediate: true }
@@ -905,11 +995,18 @@ watch(fullArticleContent, async (content) => {
     // Wait for v-html to update the DOM before attaching event listeners
     await nextTick();
     await reattachContentInteractions();
+    await restorePendingArticleScrollPosition();
   }
 });
 
 // Clean up event listeners
 onBeforeUnmount(() => {
+  if (scrollSaveTimer) {
+    clearTimeout(scrollSaveTimer);
+    scrollSaveTimer = null;
+  }
+  saveArticleScrollPosition();
+
   // Cancel any ongoing summary generation
   if (props.article?.id) {
     cancelSummaryGeneration(props.article.id);
@@ -930,6 +1027,7 @@ onBeforeUnmount(() => {
       ref="articleScrollContainer"
       class="h-full overflow-y-scroll p-3 sm:p-6 scroll-smooth"
       @click="handleContainerClick"
+      @scroll="scheduleSaveArticleScrollPosition"
     >
       <div
         class="max-w-3xl mx-auto bg-bg-primary [container-type:inline-size]"

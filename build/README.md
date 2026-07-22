@@ -8,7 +8,7 @@ This document describes how to build and package MrRSS using the Wails v3 build 
 
 - **Go 1.25+**: [https://golang.org/dl/](https://golang.org/dl/)
 - **Node.js 18+**: [https://nodejs.org/](https://nodejs.org/)
-- **Wails CLI v3**: `go install github.com/wailsapp/wails/v3/cmd/wails3@latest`
+- **Wails CLI v3**: `go install github.com/wailsapp/wails/v3/cmd/wails3@v3.0.0-alpha2.117`
 - **Task**: [https://taskfile.dev/installation/](https://taskfile.dev/installation/)
 
 ### Platform-Specific Dependencies
@@ -23,8 +23,8 @@ choco install mingw nsis -y
 
 ```bash
 sudo apt-get install -y \
-  libgtk-3-dev \
-  libwebkit2gtk-4.1-dev \
+  libgtk-4-dev \
+  libwebkitgtk-6.0-dev \
   libsoup-3.0-dev \
   gcc \
   pkg-config
@@ -274,7 +274,7 @@ task build
 
 ```bash
 sudo apt-get update
-sudo apt-get install -y libgtk-3-dev libwebkit2gtk-4.1-dev libsoup-3.0-dev gcc pkg-config
+sudo apt-get install -y libgtk-4-dev libwebkitgtk-6.0-dev libsoup-3.0-dev gcc pkg-config
 ```
 
 ### Task not found

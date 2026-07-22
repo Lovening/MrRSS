@@ -8,7 +8,7 @@
    <strong>English</strong> | <a href="README_zh.md">简体中文</a>
 </p>
 
-[![Version](https://img.shields.io/badge/version-1.3.24-blue.svg)](https://github.com/WCY-dt/MrRSS/releases)
+[![Version](https://img.shields.io/badge/version-1.3.25-blue.svg)](https://github.com/WCY-dt/MrRSS/releases)
 [![License](https://img.shields.io/badge/license-GPLv3-green.svg)](LICENSE)
 [![Go](https://img.shields.io/badge/Go-1.25+-00ADD8?logo=go)](https://go.dev/)
 [![Wails](https://img.shields.io/badge/Wails-v3%20alpha-red)](https://wails.io/)
@@ -17,7 +17,7 @@
 ## ✨ Features
 
 - 🌐 **Auto-Translation & Summarization**: Automatically translate article titles and content, and generate concise summaries to help you get information quickly
-- 🤖 **AI-Enhanced Features**: Integrated advanced AI technology for translation, summarization, recommendations, and more, making reading smarter
+- 🤖 **AI-Enhanced Features**: Integrated advanced AI technology for translation, summarization, recommendations, and more. Reading and performing operations through skills are also supported
 - 🔌 **Rich Plugin Ecosystem**: Supports integration with mainstream tools like Obsidian, Notion, FreshRSS, and RSSHub for easy feature extension
 - 📡 **Diverse Subscription Methods**: Supports URL, XPath, scripts, newsletters, and other feed types to meet different needs
 - 🏭 **Custom Scripts & Automation**: Built-in filters and scripting system supporting highly customizable automation workflows
@@ -48,6 +48,10 @@ Download the latest installer for your platform from the [Releases](https://gith
 - **Linux:** `MrRSS-{version}-linux-{arch}-portable.tar.gz`
 - **macOS:** `MrRSS-{version}-darwin-{arch}-portable.zip`
 
+**AI Agent Skills:**
+
+- **Codex:** `MrRSS-{version}-skills.zip` ([usage guide](docs/SKILLS.md))
+
 </div>
 
 </details>
@@ -70,7 +74,7 @@ Before you begin, ensure you have the following installed:
 
 **Platform-specific requirements:**
 
-- **Linux**: GTK3, WebKit2GTK 4.1, libsoup 3.0, GCC, pkg-config
+- **Linux**: GTK4, WebKitGTK 6.0, libsoup 3.0, GCC, pkg-config
 - **Windows**: MinGW-w64 (for CGO support), NSIS (for installers)
 - **macOS**: Xcode Command Line Tools
 
@@ -78,7 +82,7 @@ For detailed installation instructions, see [Build Requirements](docs/BUILD_REQU
 
 ```bash
 # Quick setup for Linux (Ubuntu 24.04+):
-sudo apt-get install libgtk-3-dev libwebkit2gtk-4.1-dev libsoup-3.0-dev gcc pkg-config
+sudo apt-get install libgtk-4-dev libwebkitgtk-6.0-dev libsoup-3.0-dev gcc pkg-config
 ```
 
 ### Installation
@@ -101,7 +105,7 @@ sudo apt-get install libgtk-3-dev libwebkit2gtk-4.1-dev libsoup-3.0-dev gcc pkg-
 3. **Install Wails v3 CLI**
 
    ```bash
-   go install github.com/wailsapp/wails/v3/cmd/wails3@latest
+   go install github.com/wailsapp/wails/v3/cmd/wails3@v3.0.0-alpha2.117
    ```
 
 4. **Build the application**
@@ -232,6 +236,7 @@ docker run -d -p 1234:1234 ghcr.io/wcy-dt/mrrss:latest-arm64
 ```
 
 Please refer to the [Server Mode API Documentation](docs/SERVER_MODE/swagger.json) for a complete API reference.
+To let Codex operate MrRSS through this API, install the release skill package described in [MrRSS Skills](docs/SKILLS.md).
 
 </div>
 

@@ -39,6 +39,7 @@ export interface AppState {
 export interface AppActions {
   setFilter: (filter: Filter) => void;
   setFeed: (feedId: number) => void;
+  selectFeedInArticleList: (feedId: number, articleId?: number) => void;
   setCategory: (category: string) => void;
   fetchArticles: (append?: boolean) => Promise<void>;
   loadMore: () => Promise<void>;
@@ -120,22 +121,30 @@ export const useAppStore = defineStore('app', () => {
   }
 
   function setFeed(feedId: number): void {
-    // Check if this feed is an image mode feed
+    // Keep image gallery navigation inside the gallery, but don't force regular article views into it.
     const feed = feeds.value.find((f) => f.id === feedId);
-    if (feed?.is_image_mode) {
-      // For image mode feeds, switch filter to image gallery
-      currentFilter.value = 'imageGallery';
+    if (feed?.is_image_mode && currentFilter.value === 'imageGallery') {
       currentFeedId.value = feedId;
       currentCategory.value = null;
       tempSelection.value = { feedId, category: null };
       // Clear and reset will be handled by fetchArticles
     } else {
-      // For regular feeds, keep currentFilter and set tempSelection
       currentFeedId.value = feedId;
       currentCategory.value = null;
       tempSelection.value = { feedId, category: null };
       fetchArticles();
     }
+  }
+
+  function selectFeedInArticleList(feedId: number, articleId?: number): void {
+    currentFilter.value = 'all';
+    currentFeedId.value = feedId;
+    currentCategory.value = null;
+    tempSelection.value = { feedId, category: null };
+    if (articleId !== undefined) {
+      currentArticleId.value = articleId;
+    }
+    fetchArticles();
   }
 
   function setCategory(category: string): void {
@@ -154,15 +163,13 @@ export const useAppStore = defineStore('app', () => {
 
     const allImageMode = categoryFeeds.length > 0 && categoryFeeds.every((f) => f.is_image_mode);
 
-    // If all feeds in this category are image mode, switch to image gallery filter
-    if (allImageMode) {
-      currentFilter.value = 'imageGallery';
+    // Keep image-only categories in the gallery only when the user is already browsing it.
+    if (allImageMode && currentFilter.value === 'imageGallery') {
       currentFeedId.value = null;
       currentCategory.value = category;
       tempSelection.value = { feedId: null, category };
       // Don't call fetchArticles here - ImageGalleryView will handle fetching
     } else {
-      // For regular categories, keep currentFilter and set tempSelection
       currentFeedId.value = null;
       currentCategory.value = category;
       tempSelection.value = { feedId: null, category };
@@ -828,6 +835,7 @@ export const useAppStore = defineStore('app', () => {
     // Actions
     setFilter,
     setFeed,
+    selectFeedInArticleList,
     setCategory,
     fetchArticles,
     loadMore,

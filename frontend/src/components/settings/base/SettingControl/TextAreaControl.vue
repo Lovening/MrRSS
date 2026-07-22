@@ -21,7 +21,6 @@ const emit = defineEmits<{
 }>();
 
 function handleInput(event: Event) {
-  // eslint-disable-next-line no-undef
   const target = event.target as HTMLTextAreaElement;
   emit('update:modelValue', target.value);
 }

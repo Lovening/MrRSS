@@ -1,6 +1,5 @@
 <script setup lang="ts">
 /* eslint-disable vue/no-v-html */
-/* eslint-disable no-undef */
 import { ref, onMounted, watch, computed, nextTick } from 'vue';
 import { PhSpinnerGap, PhArticle, PhArrowClockwise } from '@phosphor-icons/vue';
 import { useI18n } from 'vue-i18n';

@@ -4,6 +4,7 @@ import { PhSpinnerGap, PhTranslate, PhArrowsClockwise } from '@phosphor-icons/vu
 import type { Article } from '@/types/models';
 import { formatDate } from '@/utils/date';
 import { useI18n } from 'vue-i18n';
+import { useAppStore } from '@/stores/app';
 
 interface Props {
   article: Article;
@@ -25,6 +26,7 @@ const emit = defineEmits<{
 
 const { t } = useI18n();
 const { locale } = useI18n();
+const store = useAppStore();
 
 // Translation function wrapper for formatDate
 const formatDateWithI18n = (dateStr: string): string => {
@@ -47,6 +49,10 @@ const translationStatusText = computed(() => {
   }
   return t('common.toast.autoTranslateEnabled');
 });
+
+function selectArticleFeed() {
+  store.selectFeedInArticleList(props.article.feed_id, props.article.id);
+}
 </script>
 
 <template>
@@ -74,7 +80,14 @@ const translationStatusText = computed(() => {
     class="text-xs sm:text-sm text-text-secondary mb-4 sm:mb-6 flex flex-col sm:flex-row flex-wrap items-start sm:items-center gap-1.5 sm:gap-3"
   >
     <div class="flex items-center gap-2">
-      <span class="font-medium text-text-primary">{{ article.feed_title }}</span>
+      <button
+        type="button"
+        class="font-medium text-text-primary hover:text-accent transition-colors cursor-pointer"
+        :title="article.feed_title"
+        @click="selectArticleFeed"
+      >
+        {{ article.feed_title }}
+      </button>
       <template v-if="article.author && article.author !== article.feed_title">
         <span class="text-text-secondary font-normal text-[11px] sm:text-xs opacity-75">{{
           article.author
