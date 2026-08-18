@@ -74,11 +74,11 @@ function handleDownloadInstall() {
 }
 
 function openGitHubRepo() {
-  openInBrowser('https://github.com/WCY-dt/MrRSS');
+  openInBrowser('https://github.com/DevXDojo/MrRSS');
 }
 
 function openGitHubRelease() {
-  openInBrowser('https://github.com/WCY-dt/MrRSS/releases/latest');
+  openInBrowser('https://github.com/DevXDojo/MrRSS/releases/latest');
 }
 </script>
 
@@ -193,6 +193,7 @@ function openGitHubRelease() {
 </template>
 
 <style scoped>
+@reference "../../../../style.css";
 .btn {
   @apply px-3 sm:px-4 py-1.5 sm:py-2 rounded-md cursor-pointer flex items-center gap-1.5 sm:gap-2 font-medium transition-colors;
 }

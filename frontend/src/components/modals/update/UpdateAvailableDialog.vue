@@ -109,7 +109,7 @@ onUnmounted(() => {
       <p v-if="!updateInfo.download_url" class="text-text-secondary text-xs mt-4">
         {{ t('setting.update.noInstallerAvailable') }}
         <a
-          href="https://github.com/WCY-dt/MrRSS/releases/latest"
+          href="https://github.com/DevXDojo/MrRSS/releases/latest"
           target="_blank"
           class="text-accent hover:underline"
         >
@@ -146,6 +146,7 @@ onUnmounted(() => {
 </template>
 
 <style scoped>
+@reference "../../../style.css";
 .btn-primary {
   @apply bg-accent text-white border-none px-5 py-2.5 rounded-lg cursor-pointer font-semibold hover:bg-accent-hover transition-colors flex items-center gap-2;
 }
