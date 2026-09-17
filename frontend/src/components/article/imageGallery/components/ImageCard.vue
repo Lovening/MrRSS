@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { useI18n } from 'vue-i18n';
+import { useArticleDateFormat } from '@/composables/article/useArticleDateFormat';
 import { PhImage, PhStar, PhPlay } from '@phosphor-icons/vue';
 import { computed } from 'vue';
 import type { Article } from '@/types/models';
@@ -9,6 +9,7 @@ import { isBilibiliArticle } from '@/utils/bilibili';
 
 interface Props {
   article: Article;
+  imageSize?: { width: number; height: number };
   imageCount: number;
   showTextOverlay: boolean;
 }
@@ -16,6 +17,7 @@ interface Props {
 const props = defineProps<Props>();
 
 const emit = defineEmits<{
+  imageSize: [width: number, height: number];
   click: [];
   favorite: [event: Event];
   contextMenu: [event: MouseEvent];
@@ -84,37 +86,13 @@ function handleFavoriteClick(event: Event): void {
   document.dispatchEvent(new MouseEvent('click', { bubbles: true }));
 }
 
-/**
- * Format date for display
- * @param dateString - ISO date string
- * @returns Formatted date string
- */
-function formatDate(dateString: string): string {
-  const { t } = useI18n();
-  const date = new Date(dateString);
-  const now = new Date();
-  const diff = now.getTime() - date.getTime();
-  const days = Math.floor(diff / (1000 * 60 * 60 * 24));
-
-  if (days === 0) {
-    const hours = Math.floor(diff / (1000 * 60 * 60));
-    if (hours === 0) {
-      const minutes = Math.floor(diff / (1000 * 60));
-      return minutes <= 0
-        ? t('common.time.justNow')
-        : t('common.time.minutesAgo', { count: minutes });
-    }
-    return t('common.time.hoursAgo', { count: hours });
-  } else if (days < 7) {
-    return t('common.time.daysAgo', { count: days });
-  }
-  return date.toLocaleDateString();
-}
+const { formatArticleDate: formatDate, formatArticleDateTime } = useArticleDateFormat();
 </script>
 
 <template>
   <div
-    class="cursor-pointer group"
+    class="cursor-pointer group min-w-0"
+    :data-gallery-article="article.id"
     @click="emit('click')"
     @contextmenu="emit('contextMenu', $event)"
   >
@@ -130,8 +108,16 @@ function formatDate(dateString: string): string {
       <img
         :src="displayUrl"
         :alt="article.title"
+        :width="imageSize?.width || 4"
+        :height="imageSize?.height || 3"
         class="w-full h-auto block relative z-0"
         loading="lazy"
+        @load="
+          (event) => {
+            const image = event.target as HTMLImageElement;
+            emit('imageSize', image.naturalWidth, image.naturalHeight);
+          }
+        "
       />
 
       <!-- Platform badge (top-left) -->
@@ -185,7 +171,7 @@ function formatDate(dateString: string): string {
         </p>
         <div class="flex items-center justify-between text-xs text-white/80">
           <span class="truncate flex-1">{{ article.feed_title }}</span>
-          <span class="ml-2 shrink-0">{{ formatDate(article.published_at) }}</span>
+          <span class="ml-2 shrink-0" :title="formatArticleDateTime(article.published_at)">{{ formatDate(article.published_at) }}</span>
         </div>
       </div>
     </div>
@@ -197,7 +183,7 @@ function formatDate(dateString: string): string {
       </p>
       <div class="flex items-center justify-between text-xs text-text-secondary">
         <span class="truncate flex-1">{{ article.feed_title }}</span>
-        <span class="ml-2 shrink-0">{{ formatDate(article.published_at) }}</span>
+        <span class="ml-2 shrink-0" :title="formatArticleDateTime(article.published_at)">{{ formatDate(article.published_at) }}</span>
       </div>
     </div>
   </div>

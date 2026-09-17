@@ -20,6 +20,8 @@ interface ImageGalleryConfig {
   minColumns: number;
 }
 
+export type MediaTypeFilter = 'all' | 'images' | 'videos';
+
 /**
  * Image viewer state
  */
@@ -72,6 +74,7 @@ export interface ImageGalleryDataReturn {
   hasMore: import('vue').Ref<boolean>;
   imageCountCache: import('vue').Ref<Map<number, number>>;
   showOnlyUnread: import('vue').Ref<boolean>;
+  mediaType: import('vue').Ref<MediaTypeFilter>;
 
   // Methods
   fetchImages: (loadMore?: boolean) => Promise<void>;
@@ -79,12 +82,15 @@ export interface ImageGalleryDataReturn {
   getImageCount: (article: Article) => number;
   refresh: () => Promise<void>;
   toggleShowOnlyUnread: () => void;
+  setMediaType: (mediaType: MediaTypeFilter) => void;
 }
 
 /**
  * Masonry layout return type from useMasonryLayout composable
  */
 export interface MasonryLayoutReturn {
+  imageDimensions: import('vue').Ref<Map<number, { width: number; height: number }>>;
+  setImageSize: (id: number, width: number, height: number) => void;
   columns: import('vue').Ref<Article[][]>;
   columnCount: import('vue').Ref<number>;
   containerRef: import('vue').Ref<HTMLElement | null>;

@@ -1,9 +1,11 @@
 <script setup lang="ts">
-import { computed } from 'vue';
+import { computed, ref, watch } from 'vue';
 import { useI18n } from 'vue-i18n';
-import { PhCaretDown, PhCaretRight } from '@phosphor-icons/vue';
+import { PhArrowClockwise, PhCaretDown, PhCaretRight } from '@phosphor-icons/vue';
 import type { Feed } from '@/types/models';
 import { useFeedForm } from '@/composables/feed/useFeedForm';
+import { useFeedPreview } from '@/composables/feed/useFeedPreview';
+import FeedPreview from './FeedPreview.vue';
 import { useSettings } from '@/composables/core/useSettings';
 import BaseModal from '@/components/common/BaseModal.vue';
 import ModalFooter from '@/components/common/ModalFooter.vue';
@@ -13,7 +15,9 @@ import XPathConfig from './parts/XPathConfig.vue';
 import EmailConfig from './parts/EmailConfig.vue';
 import CategorySelector from './parts/CategorySelector.vue';
 import TagSelector from './parts/TagSelector.vue';
+import FeedContentOptions from './parts/FeedContentOptions.vue';
 import AdvancedSettings from './parts/AdvancedSettings.vue';
+import { useAppStore } from '@/stores/app';
 
 interface Props {
   mode: 'add' | 'edit';
@@ -24,6 +28,8 @@ const props = defineProps<Props>();
 
 const { t } = useI18n();
 const { settings } = useSettings();
+const store = useAppStore();
+const isReloading = ref(false);
 
 // Check if RSSHub is enabled
 const isRSSHubEnabled = computed(() => {
@@ -87,6 +93,41 @@ const {
   selectedTags,
 } = useFeedForm(props.feed);
 
+const showPreview = ref(false);
+const {
+  preview,
+  isLoading: isPreviewLoading,
+  failed: previewFailed,
+  load: loadPreview,
+  reset: resetPreview,
+} = useFeedPreview();
+const canPreview = computed(
+  () =>
+    props.mode === 'add' && feedType.value === 'url' && !!url.value.trim() && !isUrlInvalid.value
+);
+
+watch(
+  [url, feedType, proxyMode, proxyType, proxyHost, proxyPort, proxyUsername, proxyPassword],
+  () => {
+    resetPreview();
+    showPreview.value = false;
+  }
+);
+
+function startPreview() {
+  if (!canPreview.value || isSubmitting.value) return;
+  showPreview.value = true;
+  void loadPreview({
+    url: url.value.trim(),
+    proxy_enabled: proxyMode.value !== 'none',
+    proxy_url: proxyMode.value === 'custom' ? buildProxyUrl() : '',
+  });
+}
+function backFromPreview() {
+  resetPreview();
+  showPreview.value = false;
+}
+
 const emit = defineEmits<{
   close: [];
   added: [feedId?: number];
@@ -95,6 +136,25 @@ const emit = defineEmits<{
 
 function close() {
   emit('close');
+}
+
+async function reloadFeed() {
+  if (!props.feed || isReloading.value) return;
+
+  isReloading.value = true;
+  try {
+    const response = await fetch(`/api/feeds/refresh?id=${props.feed.id}&reset_read=true`, {
+      method: 'POST',
+    });
+    if (!response.ok) throw new Error(`Feed refresh failed: ${response.status}`);
+    window.showToast(t('modal.feed.feedRefreshStarted'), 'success');
+    store.pollProgress();
+  } catch (error) {
+    console.error('Failed to reload feed:', error);
+    window.showToast(t('modal.feed.feedRefreshFailed'), 'error');
+  } finally {
+    isReloading.value = false;
+  }
 }
 
 function insertRSSHubPrefix() {
@@ -251,6 +311,7 @@ async function submit() {
 
 // Computed modal title
 const modalTitle = computed(() => {
+  if (showPreview.value) return t('modal.feed.previewTitle');
   return props.mode === 'add' ? t('modal.feed.addNewFeed') : t('modal.feed.editFeed');
 });
 
@@ -264,9 +325,16 @@ const submitButtonText = computed(() => {
 </script>
 
 <template>
-  <BaseModal :title="modalTitle" size="md" :z-index="60" @close="close">
+  <BaseModal :title="modalTitle" :size="showPreview ? 'lg' : 'md'" :z-index="70" @close="close">
+    <FeedPreview
+      v-if="showPreview"
+      :preview="preview"
+      :loading="isPreviewLoading"
+      :failed="previewFailed"
+      @retry="startPreview"
+    />
     <!-- Form Content -->
-    <div class="p-4 sm:p-6 scroll-smooth">
+    <div v-else class="p-4 sm:p-6 scroll-smooth">
       <div class="mb-3 sm:mb-4">
         <label class="block mb-1 sm:mb-1.5 font-semibold text-xs sm:text-sm text-text-secondary">
           {{ t('common.form.title') }}
@@ -585,6 +653,10 @@ const submitButtonText = computed(() => {
       </div>
 
       <!-- Advanced Settings Section (Collapsible) -->
+      <FeedContentOptions
+        v-if="showAdvancedSettings && mode === 'edit' && feed"
+        :feed-id="feed.id"
+      />
       <AdvancedSettings
         v-if="showAdvancedSettings"
         :image-gallery-enabled="imageGalleryEnabled"
@@ -619,18 +691,41 @@ const submitButtonText = computed(() => {
     <template #footer>
       <ModalFooter
         align="right"
+        class="sm:w-full"
         :secondary-button="{
-          label: t('common.cancel'),
+          label: showPreview ? t('common.back') : t('common.cancel'),
           disabled: isSubmitting,
-          onClick: close,
+          onClick: showPreview ? backFromPreview : close,
         }"
         :primary-button="{
           label: submitButtonText,
-          disabled: isSubmitting || !isFormValid,
+          disabled: isSubmitting || !isFormValid || isPreviewLoading,
           loading: isSubmitting,
           onClick: submit,
         }"
-      />
+      >
+        <template #left>
+          <button
+            v-if="mode === 'add' && feedType === 'url' && !showPreview"
+            type="button"
+            class="text-accent text-sm font-semibold disabled:opacity-50"
+            :disabled="!canPreview || isSubmitting"
+            @click="startPreview"
+          >
+            {{ t('modal.feed.previewTitle') }}
+          </button>
+          <button
+            v-if="mode === 'edit' && feed"
+            type="button"
+            class="sm:mr-auto inline-flex items-center justify-center gap-2 px-4 sm:px-5 py-2 sm:py-2.5 rounded-lg border border-border text-sm sm:text-base font-semibold text-text-primary hover:bg-bg-tertiary transition-colors disabled:opacity-70 disabled:cursor-not-allowed"
+            :disabled="isSubmitting || isReloading"
+            @click="reloadFeed"
+          >
+            <PhArrowClockwise :size="18" :class="{ 'animate-spin': isReloading }" />
+            {{ isReloading ? t('modal.feed.reloadingFeed') : t('modal.feed.reloadFeed') }}
+          </button>
+        </template>
+      </ModalFooter>
     </template>
   </BaseModal>
 </template>

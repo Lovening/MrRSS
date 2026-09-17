@@ -1,17 +1,21 @@
 import { openInBrowser } from '@/utils/browser';
 import { copyArticleLink, copyArticleTitle } from '@/utils/clipboard';
 import { useAppStore } from '@/stores/app';
+import { useSettings } from '@/composables/core/useSettings';
 import type { Article } from '@/types/models';
 import type { Composer } from 'vue-i18n';
 
 type ViewMode = 'original' | 'rendered' | 'external';
+type RelativeReadDirection = 'above' | 'below';
 
 export function useArticleActions(
   t: Composer['t'],
   defaultViewMode: { value: ViewMode },
-  onReadStatusChange?: () => void
+  onReadStatusChange?: () => void | Promise<void>,
+  onRelativeRead?: (article: Article, direction: RelativeReadDirection) => void | Promise<void>
 ) {
   const store = useAppStore();
+  const { settings } = useSettings();
 
   // Get effective view mode for an article based on feed settings and global settings
   function getEffectiveViewMode(article: Article): ViewMode {
@@ -42,15 +46,25 @@ export function useArticleActions(
       {
         label: article.is_read ? t('article.action.markAsUnread') : t('article.action.markAsRead'),
         action: 'toggleRead',
-        icon: article.is_read ? 'ph-envelope' : 'ph-envelope-open',
+        icon: 'ph-circle',
+        iconWeight: article.is_read ? 'regular' : 'fill',
+        iconColor: 'text-text-secondary',
       },
       {
-        label: t('article.action.markAboveAsRead'),
+        label: t(
+          store.articleGroupBy === 'feed'
+            ? 'article.action.markAboveInFeedAsRead'
+            : 'article.action.markAboveAsRead'
+        ),
         action: 'markAboveAsRead',
         icon: 'ph-arrow-bend-right-up',
       },
       {
-        label: t('article.action.markBelowAsRead'),
+        label: t(
+          store.articleGroupBy === 'feed'
+            ? 'article.action.markBelowInFeedAsRead'
+            : 'article.action.markBelowAsRead'
+        ),
         action: 'markBelowAsRead',
         icon: 'ph-arrow-bend-left-down',
       },
@@ -106,6 +120,11 @@ export function useArticleActions(
 
     // Add remaining menu items
     menuItems.push(
+      {
+        label: t('article.action.goToFeed'),
+        action: 'goToFeed',
+        icon: 'ph-rss-simple',
+      },
       { separator: true },
       {
         label: article.is_hidden
@@ -193,6 +212,10 @@ export function useArticleActions(
     article: Article,
     onReadStatusChange?: () => void
   ): Promise<void> {
+    if (action === 'goToFeed') {
+      store.selectFeedInArticleList(article.feed_id, article.id);
+      return;
+    }
     if (action === 'toggleRead') {
       const newState = !article.is_read;
       article.is_read = newState;
@@ -212,7 +235,7 @@ export function useArticleActions(
       }
     } else if (action === 'markAboveAsRead' || action === 'markBelowAsRead') {
       try {
-        const direction = action === 'markAboveAsRead' ? 'above' : 'below';
+        const direction: RelativeReadDirection = action === 'markAboveAsRead' ? 'above' : 'below';
 
         // Show confirmation dialog
         const confirmTitle =
@@ -220,17 +243,21 @@ export function useArticleActions(
             ? t('article.action.markAboveReadConfirmTitle')
             : t('article.action.markBelowReadConfirmTitle');
         const confirmMessage =
-          action === 'markAboveAsRead'
-            ? t('article.action.markAboveReadConfirmMessage')
-            : t('article.action.markBelowReadConfirmMessage');
+          store.articleGroupBy === 'feed'
+            ? t('article.action.markRelativeInFeedConfirmMessage')
+            : action === 'markAboveAsRead'
+              ? t('article.action.markAboveReadConfirmMessage')
+              : t('article.action.markBelowReadConfirmMessage');
 
-        const confirmed = await window.showConfirm({
-          title: confirmTitle,
-          message: confirmMessage,
-          confirmText: t('common.confirm'),
-          cancelText: t('common.cancel'),
-          isDanger: false,
-        });
+        const confirmed = settings.value.confirm_mark_as_read
+          ? await window.showConfirm({
+              title: confirmTitle,
+              message: confirmMessage,
+              confirmText: t('common.confirm'),
+              cancelText: t('common.cancel'),
+              isDanger: false,
+            })
+          : true;
 
         if (!confirmed) {
           return;
@@ -239,11 +266,18 @@ export function useArticleActions(
         // Build query parameters
         const params = new URLSearchParams({
           id: article.id.toString(),
-          direction: direction,
+          direction:
+            store.articleSortOrder === 'oldest'
+              ? direction === 'above'
+                ? 'below'
+                : 'above'
+              : direction,
         });
 
         // Add feed_id or category if we're in a filtered view
-        if (store.currentFeedId) {
+        if (store.articleGroupBy === 'feed') {
+          params.append('feed_id', article.feed_id.toString());
+        } else if (store.currentFeedId) {
           params.append('feed_id', store.currentFeedId.toString());
         } else if (store.currentCategory) {
           params.append('category', store.currentCategory);
@@ -259,13 +293,14 @@ export function useArticleActions(
 
         const data = await res.json();
 
-        // Refresh the article list to show updated read status
-        if (onReadStatusChange) {
-          onReadStatusChange();
+        // Update the visible list in place so it never clears and loses its scroll position.
+        if (onRelativeRead) {
+          await onRelativeRead(article, direction);
         }
 
-        // Refresh articles from server
-        await store.fetchArticles();
+        if (onReadStatusChange) {
+          await onReadStatusChange();
+        }
 
         window.showToast(
           t('article.action.markedNArticlesAsRead', { count: data.count || 0 }),
@@ -293,13 +328,12 @@ export function useArticleActions(
     } else if (action === 'toggleReadLater') {
       const newState = !article.is_read_later;
       article.is_read_later = newState;
-      // When adding to read later, also mark as unread
-      if (newState) {
-        article.is_read = false;
-      }
       try {
-        await fetch(`/api/articles/toggle-read-later?id=${article.id}`, { method: 'POST' });
-        // Update unread counts after toggling read later status
+        const response = await fetch(`/api/articles/toggle-read-later?id=${article.id}`, {
+          method: 'POST',
+        });
+        if (!response.ok) throw new Error(`HTTP ${response.status}`);
+        void store.fetchFilterCounts();
         if (onReadStatusChange) {
           onReadStatusChange();
         }

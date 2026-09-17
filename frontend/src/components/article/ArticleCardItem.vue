@@ -1,9 +1,10 @@
 <script setup lang="ts">
+import { withShortcut } from '@/composables/ui/shortcutBindings';
 import { ref, computed, onMounted, onBeforeUnmount } from 'vue';
 import { useI18n } from 'vue-i18n';
 import { PhEyeSlash, PhStar, PhClockCountdown } from '@phosphor-icons/vue';
 import type { Article } from '@/types/models';
-import { formatDate as formatDateUtil } from '@/utils/date';
+import { useArticleDateFormat } from '@/composables/article/useArticleDateFormat';
 import { getProxiedMediaUrl, isMediaCacheEnabled } from '@/utils/mediaProxy';
 import { useAppStore } from '@/stores/app';
 import { imageCache } from '@/utils/imageCache';
@@ -18,9 +19,10 @@ const props = defineProps<Props>();
 const emit = defineEmits<{
   click: [];
   contextmenu: [event: MouseEvent];
+  observeElement: [element: Element | null];
 }>();
 
-const { t, locale } = useI18n();
+const { t } = useI18n();
 const store = useAppStore();
 
 // Check if article is from RSSHub feed - O(1) lookup using feedMap
@@ -30,10 +32,7 @@ const isRSSHubArticle = computed(() => {
   return feed?.url.startsWith('rsshub://') || false;
 });
 
-// Translation function wrapper for formatDate
-const formatDateWithI18n = (dateStr: string): string => {
-  return formatDateUtil(dateStr, locale.value, t);
-};
+const { formatArticleDate: formatDateWithI18n, formatArticleDateTime } = useArticleDateFormat();
 
 const mediaCacheEnabled = ref(false);
 
@@ -120,7 +119,9 @@ function handleImageError(event: Event) {
 
 <template>
   <div
+    :ref="(el) => emit('observeElement', el as Element | null)"
     :data-article-id="article.id"
+    :title="withShortcut(t('article.action.openArticle'), 'openArticle')"
     :class="[
       'article-card-item',
       article.is_read ? 'read' : '',
@@ -203,7 +204,9 @@ function handleImageError(event: Event) {
       <!-- Meta info -->
       <div class="card-meta">
         <span class="feed-name">{{ article.feed_title }}</span>
-        <span class="publish-date">{{ formatDateWithI18n(article.published_at) }}</span>
+        <span class="publish-date" :title="formatArticleDateTime(article.published_at)">
+          {{ formatDateWithI18n(article.published_at) }}
+        </span>
       </div>
     </div>
   </div>

@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/url"
 	"testing"
+	"time"
 
 	"github.com/mmcdole/gofeed"
 )
@@ -108,6 +109,41 @@ func TestGetHTTPClientProxyPrecedence(t *testing.T) {
 		if pu4, _ := tr4.Proxy(&http.Request{URL: &url.URL{Scheme: "http", Host: "example.com"}}); pu4 != nil {
 			t.Fatalf("expected no proxy when global proxy is disabled, got %v", pu4)
 		}
+	}
+}
+
+func TestFeedHTTPTimeoutDoesNotOverrideRetryBudget(t *testing.T) {
+	db := setupDBForFeedTests(t)
+	defer db.Close()
+	fetcher := &Fetcher{db: db}
+	for _, tc := range []struct {
+		setting string
+		want    time.Duration
+	}{
+		{"120", 120 * time.Second},
+		{"60", 60 * time.Second},
+		{"10", 60 * time.Second},
+		{"", 60 * time.Second},
+		{"-1", 60 * time.Second},
+		{"invalid", 60 * time.Second},
+		{"9223372036854775807", 60 * time.Second},
+	} {
+		t.Run(tc.setting, func(t *testing.T) {
+			if err := db.SetSetting("retry_timeout_seconds", tc.setting); err != nil {
+				t.Fatal(err)
+			}
+			client, err := fetcher.getHTTPClient(models.Feed{})
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer client.CloseIdleConnections()
+			if client.Timeout != tc.want {
+				t.Fatalf("HTTP timeout = %v, want %v", client.Timeout, tc.want)
+			}
+			if retry := fetcher.retryTimeout(); client.Timeout < retry {
+				t.Fatalf("HTTP timeout %v truncates retry budget %v", client.Timeout, retry)
+			}
+		})
 	}
 }
 

@@ -187,7 +187,7 @@ async function handleSummaryLinkClick(event: MouseEvent) {
   >
     <!-- Summary Header -->
     <div
-      class="flex items-center justify-between gap-2 cursor-pointer select-none"
+      class="flex min-h-[30px] items-center justify-between gap-2 cursor-pointer select-none"
       @click="toggleSummary"
     >
       <div class="flex items-center gap-2">
@@ -253,8 +253,11 @@ async function handleSummaryLinkClick(event: MouseEvent) {
             {{ t('setting.content.summaryManualTriggerDesc') }}
           </div>
           <button
-            class="flex items-center gap-2 px-4 py-2 bg-accent text-white rounded-lg hover:bg-accent/90 transition-colors"
+            type="button"
+            class="flex items-center gap-2 px-4 py-2 bg-accent text-white rounded-lg hover:bg-accent-hover focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2 focus-visible:ring-offset-bg-secondary active:bg-accent-hover active:brightness-90 transition-colors"
             @click.stop="handleGenerateSummary"
+            @keydown.enter.stop
+            @keydown.space.stop
           >
             <PhPlay :size="16" />
             <span class="text-sm">{{ t('setting.content.generateSummary') }}</span>
@@ -343,9 +346,7 @@ async function handleSummaryLinkClick(event: MouseEvent) {
 
 <style scoped>
 .summary-container {
-  min-height: 8rem;
   transition:
-    min-height 0.2s ease,
     background-color 0.2s ease,
     border-color 0.2s ease;
 }

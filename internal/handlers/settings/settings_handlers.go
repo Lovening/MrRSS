@@ -2,8 +2,10 @@ package settings
 
 import (
 	"encoding/json"
+	"fmt"
 	"log"
 	"net/http"
+	"strconv"
 	"strings"
 
 	"MrRSS/internal/handlers/core"
@@ -59,11 +61,27 @@ func HandleSettings(h *core.Handler, w http.ResponseWriter, r *http.Request) {
 			return
 		}
 
-		wasFreshRSSEnabled := false
-		if _, ok := req["freshrss_enabled"]; ok {
-			currentValue, err := h.DB.GetSetting("freshrss_enabled")
-			if err == nil {
-				wasFreshRSSEnabled = currentValue == "true"
+		wasEnabled := map[string]bool{}
+		for _, provider := range []string{"freshrss", "miniflux"} {
+			current, _ := h.DB.GetSetting(provider + "_enabled")
+			wasEnabled[provider] = current == "true"
+		}
+
+		if rawStartupOnBoot, ok := req["startup_on_boot"]; ok {
+			startupOnBoot, err := strconv.ParseBool(strings.TrimSpace(rawStartupOnBoot))
+			if err != nil {
+				response.Error(w, fmt.Errorf("invalid startup_on_boot value: %w", err), http.StatusBadRequest)
+				return
+			}
+			req["startup_on_boot"] = strconv.FormatBool(startupOnBoot)
+
+			currentValue, _ := h.DB.GetSetting("startup_on_boot")
+			if h.SetStartupOnBoot != nil && currentValue != req["startup_on_boot"] {
+				if err := h.SetStartupOnBoot(startupOnBoot); err != nil {
+					log.Printf("Failed to update system startup integration: %v", err)
+					response.Error(w, fmt.Errorf("update system startup integration: %w", err), http.StatusInternalServerError)
+					return
+				}
 			}
 		}
 
@@ -73,12 +91,23 @@ func HandleSettings(h *core.Handler, w http.ResponseWriter, r *http.Request) {
 			response.Error(w, err, http.StatusInternalServerError)
 			return
 		}
+		// Providers retain clients and credentials. Rebuild them after relevant
+		// settings change so fixing a proxy or key takes effect without a restart.
+		if translator, ok := h.Translator.(interface{ InvalidateCache() }); ok {
+			for key := range req {
+				if isTranslationSetting(key) {
+					translator.InvalidateCache()
+					break
+				}
+			}
+		}
 
-		if shouldCleanupFreshRSSData(wasFreshRSSEnabled, req["freshrss_enabled"]) {
-			if err := h.DB.CleanupFreshRSSData(); err != nil {
-				log.Printf("Failed to cleanup FreshRSS data after disabling sync: %v", err)
-				response.Error(w, err, http.StatusInternalServerError)
-				return
+		for _, provider := range []string{"freshrss", "miniflux"} {
+			if shouldCleanupFreshRSSData(wasEnabled[provider], req[provider+"_enabled"]) {
+				if err := h.DB.CleanupReaderData(provider); err != nil {
+					response.Error(w, err, http.StatusInternalServerError)
+					return
+				}
 			}
 		}
 
@@ -89,6 +118,15 @@ func HandleSettings(h *core.Handler, w http.ResponseWriter, r *http.Request) {
 	default:
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 	}
+}
+
+func isTranslationSetting(key string) bool {
+	for _, prefix := range []string{"translation_", "google_translate_", "deepl_", "baidu_", "microsoft_", "tencent_", "custom_translation_", "ai_", "proxy_"} {
+		if strings.HasPrefix(key, prefix) {
+			return true
+		}
+	}
+	return false
 }
 
 func shouldCleanupFreshRSSData(wasEnabled bool, newValue string) bool {

@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { ref, computed, watch, onMounted } from 'vue';
 import { useI18n } from 'vue-i18n';
+import { useArticleDateFormat } from '@/composables/article/useArticleDateFormat';
 import {
   PhX,
   PhCopy,
@@ -35,6 +36,7 @@ const emit = defineEmits<{
 }>();
 
 const { t } = useI18n();
+const { formatArticleDateTime } = useArticleDateFormat();
 
 // Track media cache setting
 const mediaCacheEnabled = ref(false);
@@ -166,6 +168,9 @@ async function nextImage(): void {
  * Handle thumbnail selection
  */
 function handleThumbnailSelect(index: number): void {
+  // Clicking the active thumbnail does not change the image src, so no new
+  // load event would fire to clear a freshly enabled loading indicator.
+  if (index === localImageIndex.value) return;
   localImageIndex.value = index;
   viewer.currentImageLoading.value = true;
   viewer.resetView();
@@ -216,7 +221,9 @@ window.addEventListener('image-wheel-navigate', ((e: CustomEvent) => {
 
 <template>
   <div
-    class="fixed inset-0 z-50 bg-black/90 flex flex-col p-4"
+    role="dialog"
+    aria-modal="true"
+    class="image-viewer-modal fixed inset-0 z-50 bg-black/90 flex flex-col p-4"
     data-image-viewer="true"
     @click="emit('close')"
   >
@@ -256,11 +263,13 @@ window.addEventListener('image-wheel-navigate', ((e: CustomEvent) => {
           >
             <PhMagnifyingGlassMinus :size="20" />
           </button>
-          <span
-            class="px-2 py-1.5 rounded bg-black/50 text-white text-sm font-medium min-w-[60px] text-center"
+          <button
+            class="px-2 py-1.5 rounded bg-black/50 hover:bg-black/70 text-white text-sm font-medium min-w-[60px] text-center transition-colors"
+            :title="t('common.imageViewer.resetZoom')"
+            @click="viewer.resetView"
           >
             {{ Math.round(viewer.scale.value * 100) }}%
-          </span>
+          </button>
           <button
             class="px-2 py-1.5 rounded bg-black/50 hover:bg-black/70 text-white transition-all duration-200 hover:scale-105 active:scale-95"
             :disabled="viewer.scale.value >= 5"
@@ -308,7 +317,8 @@ window.addEventListener('image-wheel-navigate', ((e: CustomEvent) => {
       <!-- Right: Close button -->
       <div class="absolute right-0 top-0">
         <button
-          class="w-8 h-8 bg-black/50 hover:bg-black/70 rounded-full text-white flex items-center justify-center transition-colors"
+          class="w-8 h-8 bg-black/50 rounded-full text-white flex items-center justify-center transition-colors hover:bg-white hover:text-black focus-visible:bg-white focus-visible:text-black focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white focus-visible:ring-offset-2 focus-visible:ring-offset-black active:bg-white/80"
+          :aria-label="t('common.close')"
           @click="emit('close')"
         >
           <PhX :size="20" />
@@ -319,7 +329,7 @@ window.addEventListener('image-wheel-navigate', ((e: CustomEvent) => {
     <!-- Navigation buttons (available for both images and videos) -->
     <template v-if="viewer.canNavigatePrevious">
       <button
-        class="absolute top-[calc(50%-64px-8px)] left-4 -translate-y-1/2 w-12 h-12 rounded text-white text-4xl flex items-center justify-center transition-all duration-200 hover:scale-110 active:scale-95 z-10"
+        class="absolute top-[calc(50%-64px-8px)] left-4 -translate-y-1/2 w-12 h-12 rounded text-white text-4xl flex items-center justify-center transition-all duration-200 hover:scale-110 hover:bg-white/10 active:scale-95 z-10"
         style="
           text-shadow:
             0 1px 3px rgba(0, 0, 0, 0.8),
@@ -332,7 +342,7 @@ window.addEventListener('image-wheel-navigate', ((e: CustomEvent) => {
     </template>
     <template v-if="viewer.canNavigateNext">
       <button
-        class="absolute top-[calc(50%-64px-8px)] right-4 -translate-y-1/2 w-12 h-12 rounded text-white text-4xl flex items-center justify-center transition-all duration-200 hover:scale-110 active:scale-95 z-10"
+        class="absolute top-[calc(50%-64px-8px)] right-4 -translate-y-1/2 w-12 h-12 rounded text-white text-4xl flex items-center justify-center transition-all duration-200 hover:scale-110 hover:bg-white/10 active:scale-95 z-10"
         style="
           text-shadow:
             0 1px 3px rgba(0, 0, 0, 0.8),
@@ -473,7 +483,7 @@ window.addEventListener('image-wheel-navigate', ((e: CustomEvent) => {
       <div class="flex items-center gap-4 text-sm text-white/80">
         <span class="truncate flex-1">{{ article?.feed_title }}</span>
         <span class="shrink-0">{{
-          article?.published_at ? new Date(article.published_at).toLocaleDateString() : ''
+          article?.published_at ? formatArticleDateTime(article.published_at) : ''
         }}</span>
       </div>
     </div>
@@ -481,6 +491,10 @@ window.addEventListener('image-wheel-navigate', ((e: CustomEvent) => {
 </template>
 
 <style scoped>
+.image-viewer-modal button:not(:disabled) {
+  cursor: pointer;
+}
+
 /* Define keyframes for spinner animation */
 @keyframes spin {
   from {

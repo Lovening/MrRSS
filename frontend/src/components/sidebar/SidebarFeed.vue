@@ -6,11 +6,17 @@ import {
   PhImage,
   PhDotsSixVertical,
   PhLock,
+  PhPushPin,
 } from '@phosphor-icons/vue';
 import type { Feed } from '@/types/models';
+import { useSidebarSort } from '@/composables/ui/useSidebarSort';
 import { useI18n } from 'vue-i18n';
+import { useSettings } from '@/composables/core/useSettings';
+import FeedIcon from '@/components/common/FeedIcon.vue';
 
 const { t } = useI18n();
+const { isPinned: isItemPinned } = useSidebarSort();
+const { settings } = useSettings();
 
 interface Props {
   feed: Feed;
@@ -73,14 +79,6 @@ function getFriendlyErrorMessage(error: string): string {
   return error;
 }
 
-function getFavicon(url: string): string {
-  try {
-    return `https://www.google.com/s2/favicons?domain=${new URL(url).hostname}`;
-  } catch {
-    return '';
-  }
-}
-
 function isRSSHubFeed(feed: Feed): boolean {
   return feed.url.startsWith('rsshub://');
 }
@@ -99,9 +97,11 @@ function handleDragEnd() {
     :class="['feed-item', isActive ? 'active' : '', props.compactMode ? 'compact' : '']"
     :data-feed-id="feed.id"
     :data-level="level || 0"
+    :data-pinned="isItemPinned(`feed:${feed.id}`)"
     @click="emit('click')"
     @contextmenu="(e) => emit('contextmenu', e)"
   >
+    <PhPushPin v-if="isItemPinned(`feed:${feed.id}`)" :size="12" class="shrink-0 text-accent" />
     <!-- Drag handle (only visible in edit mode and not for FreshRSS feeds) -->
     <div
       v-if="isEditMode && !feed.is_freshrss_source"
@@ -123,13 +123,7 @@ function handleDragEnd() {
       <PhLock :size="14" />
     </div>
 
-    <div class="w-4 h-4 flex items-center justify-center shrink-0">
-      <img
-        :src="feed.image_url || getFavicon(feed.url)"
-        class="w-full h-full object-contain"
-        @error="($event.target as HTMLElement).style.display = 'none'"
-      />
-    </div>
+    <FeedIcon :feed="feed" class="w-4 h-4" />
     <span class="truncate flex-1">{{ feed.title }}</span>
 
     <!-- RSSHub indicator -->
@@ -192,7 +186,9 @@ function handleDragEnd() {
       </Transition>
     </div>
 
-    <span v-if="unreadCount > 0" class="unread-badge">{{ unreadCount }}</span>
+    <span v-if="settings.show_unread_counts && unreadCount > 0" class="unread-badge">
+      {{ unreadCount }}
+    </span>
   </div>
 </template>
 

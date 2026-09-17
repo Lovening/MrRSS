@@ -89,7 +89,10 @@ describe('Article Operations', () => {
 
     // Try to find mark all as read button (it might be in a context menu or toolbar)
     cy.get('body').then(($body) => {
-      if ($body.find('button').filter((i, el) => /mark.*all|全部标记/i.test(el.textContent || '')).length > 0) {
+      if (
+        $body.find('button').filter((i, el) => /mark.*all|全部标记/i.test(el.textContent || ''))
+          .length > 0
+      ) {
         cy.get('button')
           .contains(/mark.*all|全部标记/i)
           .click({ force: true });
@@ -127,7 +130,10 @@ describe('Article Operations', () => {
 
     // Find search input
     cy.get('body').then(($body) => {
-      if ($body.find('input[type="search"], input[placeholder*="search"], input[placeholder*="搜索"]').length > 0) {
+      if (
+        $body.find('input[type="search"], input[placeholder*="search"], input[placeholder*="搜索"]')
+          .length > 0
+      ) {
         cy.get('input[type="search"], input[placeholder*="search"], input[placeholder*="搜索"]')
           .last()
           .type('test{enter}');
@@ -366,6 +372,7 @@ describe('Article Operations', () => {
       body: { content: '<p>Article context for AI chat</p>', cached: true },
     }).as('chatArticleContent');
     cy.intercept('POST', '/api/articles/read*', { statusCode: 200, body: { success: true } });
+    cy.intercept('GET', '/api/ai/profiles', { statusCode: 200, body: [] });
     cy.intercept('GET', '/api/ai/chat/sessions*', (req) => {
       req.reply({ statusCode: 200, body: sessions });
     }).as('chatSessions');
@@ -412,7 +419,10 @@ describe('Article Operations', () => {
       if (lastMessage === 'trigger failure') {
         req.reply({
           statusCode: 500,
-          body: { error: 'Failed to get response from AI. Please try again.', session_id: sessionID },
+          body: {
+            error: 'Failed to get response from AI. Please try again.',
+            session_id: sessionID,
+          },
         });
         return;
       }
@@ -444,8 +454,7 @@ describe('Article Operations', () => {
     cy.contains('.chat-panel', 'Persisted answer').should('be.visible');
 
     cy.get('[data-testid="chat-new-session"]').click();
-    cy.wait('@createChatSession');
-    cy.wait('@chatMessages');
+    cy.get('@createChatSession.all').should('have.length', 1);
     cy.contains('.chat-panel', 'Persisted answer').should('not.exist');
     cy.get('[data-testid="chat-session-switcher"]').click();
     cy.get('.chat-panel [data-session-id="1"]').click();
@@ -456,7 +465,8 @@ describe('Article Operations', () => {
     cy.wait('@aiChat');
     cy.wait('@chatMessages');
     cy.contains('.chat-panel', 'trigger failure').should('be.visible');
-    cy.contains('Failed to get response from AI. Please try again.').should('be.visible');
+    cy.contains('The AI service is temporarily unavailable. Please try again later.').should(
+      'be.visible'
+    );
   });
-
 });

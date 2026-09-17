@@ -3,12 +3,10 @@
 package core
 
 import (
-	"bytes"
 	"context"
 	"fmt"
 	"log"
 	"net/http"
-	"net/url"
 	"strings"
 	"sync"
 	"time"
@@ -25,8 +23,6 @@ import (
 	"MrRSS/internal/utils/httputil"
 	"MrRSS/internal/utils/textutil"
 	"MrRSS/internal/utils/urlutil"
-
-	"codeberg.org/readeck/go-readability/v2"
 
 	"github.com/mmcdole/gofeed"
 )
@@ -58,12 +54,14 @@ type Handler struct {
 	DB                *database.DB
 	Fetcher           *feed.Fetcher
 	Translator        translation.Translator
-	AIProfileProvider *ai.ProfileProvider // AI profile provider for feature-specific configurations
+	AIProfileProvider *ai.ProfileProvider    // AI profile provider for feature-specific configurations
+	ChatRequests      ai.ChatRequestRegistry // Cancels only the identified chat request
 	AITracker         *ai.UsageTracker
 	DiscoveryService  *discovery.Service
 	App               interface{}         // Wails app instance for browser integration (interface{} to avoid import in server mode)
 	ContentCache      *cache.ContentCache // Cache for article content
 	Stats             *statistics.Service // Statistics tracking service
+	SetStartupOnBoot  func(bool) error    // Optional desktop-only startup integration
 
 	// Discovery state tracking for polling-based progress
 	DiscoveryMu          sync.RWMutex
@@ -118,16 +116,23 @@ func (h *Handler) Statistics() *statistics.Service {
 // GetArticleContent fetches article content with caching
 // Returns (content, wasCached, error)
 func (h *Handler) GetArticleContent(articleID int64) (string, bool, error) {
+	return h.GetArticleContentContext(context.Background(), articleID)
+}
+
+func (h *Handler) GetArticleContentContext(ctx context.Context, articleID int64) (string, bool, error) {
+	if err := ctx.Err(); err != nil {
+		return "", false, err
+	}
 	// First, check database cache (persistent cache)
 	content, found, err := h.DB.GetArticleContent(articleID)
-	if err == nil && found {
+	if err == nil && found && strings.TrimSpace(content) != "" {
 		// Also populate memory cache for faster subsequent access
 		h.ContentCache.Set(articleID, content)
 		return content, true, nil
 	}
 
 	// Check memory cache (in-memory cache, might be stale but fast)
-	if content, found := h.ContentCache.Get(articleID); found {
+	if content, found := h.ContentCache.Get(articleID); found && strings.TrimSpace(content) != "" {
 		return content, true, nil
 	}
 
@@ -147,18 +152,15 @@ func (h *Handler) GetArticleContent(articleID int64) (string, bool, error) {
 		return "", false, nil
 	}
 
-	// Trigger immediate feed refresh using the new task manager
-	// This bypasses the queue and pool limits
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	// Read the source once; reading an article must not refresh the entire feed
+	// or trigger unrelated saves and cleanup.
+	fetchCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
 
-	// Fetch the feed immediately (article click triggered)
-	h.Fetcher.FetchFeedForArticle(ctx, *targetFeed)
-
 	// Parse the feed to get fresh content
-	parsedFeed, err := h.Fetcher.ParseFeedWithFeed(ctx, targetFeed, true) // High priority for content fetching
+	parsedFeed, err := h.Fetcher.ParseFeedWithFeed(fetchCtx, targetFeed, true) // High priority for content fetching
 	if err != nil {
-		return "", false, err
+		return h.recoverArchivedContent(ctx, article, targetFeed, err)
 	}
 
 	// Cache the feed for future use
@@ -170,6 +172,10 @@ func (h *Handler) GetArticleContent(articleID int64) (string, bool, error) {
 		content := feed.ExtractContent(matchingItem)
 		cleanContent := textutil.CleanHTML(content)
 
+		if strings.TrimSpace(cleanContent) == "" {
+			return h.recoverArchivedContent(ctx, article, targetFeed, nil)
+		}
+
 		// Cache the content in both memory and database
 		h.ContentCache.Set(articleID, cleanContent)
 		if err := h.DB.SetArticleContent(articleID, cleanContent); err != nil {
@@ -179,58 +185,34 @@ func (h *Handler) GetArticleContent(articleID int64) (string, bool, error) {
 		return cleanContent, false, nil
 	}
 
-	return "", false, nil
+	return h.recoverArchivedContent(ctx, article, targetFeed, nil)
 }
 
-// FetchFullArticleContent fetches the full article content from the original URL using readability.
-func (h *Handler) FetchFullArticleContent(articleURL string) (string, error) {
-	return h.FetchFullArticleContentWithFeed(articleURL, nil)
-}
-
-// FetchFullArticleContentWithFeed fetches full content using the same proxy semantics as feed refresh.
-func (h *Handler) FetchFullArticleContentWithFeed(articleURL string, feedConfig *models.Feed) (string, error) {
-	parsedURL, err := url.ParseRequestURI(articleURL)
-	if err != nil {
-		return "", fmt.Errorf("parse article URL: %w", err)
+// recoverArchivedContent handles items which have rolled out of the source's RSS window.
+func (h *Handler) recoverArchivedContent(ctx context.Context, article *models.Article, source *models.Feed, sourceErr error) (string, bool, error) {
+	if err := ctx.Err(); err != nil {
+		return "", false, err
 	}
-
-	client, err := h.createArticleHTTPClient(feedConfig)
-	if err != nil {
-		return "", err
+	enabled, _ := h.DB.GetSetting("full_text_fetch_enabled")
+	if enabled == "true" && article.URL != "" {
+		content, err := h.FetchFullArticleContentContext(ctx, article.URL, source)
+		if err == nil && strings.TrimSpace(content) != "" {
+			h.ContentCache.Set(article.ID, content)
+			if err := h.DB.SetArticleContent(article.ID, content); err != nil {
+				log.Printf("Cache recovered article: %v", err)
+			}
+			return content, false, nil
+		}
+		if sourceErr == nil {
+			sourceErr = err
+		}
 	}
-
-	req, err := http.NewRequest(http.MethodGet, articleURL, nil)
-	if err != nil {
-		return "", fmt.Errorf("create request: %w", err)
+	// A saved source description remains useful even when the remote page is unavailable.
+	// Do not cache this fallback as full content, so retry can recover the actual article.
+	if strings.TrimSpace(article.OriginalSummary) != "" {
+		return article.OriginalSummary, false, nil
 	}
-	req.Header.Set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
-	req.Header.Set("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8")
-	req.Header.Set("Accept-Language", "en-US,en;q=0.9,zh-CN;q=0.8,zh;q=0.7")
-	req.Header.Set("DNT", "1")
-
-	resp, err := client.Do(req)
-	if err != nil {
-		return "", fmt.Errorf("fetch page: %w", err)
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode < http.StatusOK || resp.StatusCode >= http.StatusMultipleChoices {
-		return "", fmt.Errorf("fetch page: HTTP %d: %s", resp.StatusCode, resp.Status)
-	}
-
-	article, err := readability.FromReader(resp.Body, parsedURL)
-	if err != nil {
-		return "", fmt.Errorf("readability parse: %w", err)
-	}
-
-	// Render the article content as HTML
-	var buf bytes.Buffer
-	err = article.RenderHTML(&buf)
-	if err != nil {
-		return "", fmt.Errorf("render HTML: %w", err)
-	}
-
-	return buf.String(), nil
+	return "", false, sourceErr
 }
 
 func (h *Handler) createArticleHTTPClient(feedConfig *models.Feed) (*http.Client, error) {

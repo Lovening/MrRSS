@@ -161,6 +161,7 @@ const {
   widthClass,
   maxWidthStyle,
   shouldTeleport,
+  teleportTarget,
   resetIndex,
   registerAsOpen,
   unregisterAsOpen,
@@ -195,6 +196,7 @@ function toggleDropdown() {
     resetIndex();
     // Set up scroll listener for the container
     setupScrollListener();
+    updateDropdownPosition();
     // Calculate position after DOM update
     nextTick(updateDropdownPosition);
   } else {
@@ -236,7 +238,7 @@ function handleAddOption() {
     addInputValue.value = '';
     // Keep dropdown open for adding more options
     nextTick(() => {
-      addInputRef.value?.focus();
+      addInputRef.value?.focus({ preventScroll: true });
     });
   }
 }
@@ -259,15 +261,15 @@ watch(
 watch(isOpen, (open) => {
   if (open && props.allowCustomInput) {
     nextTick(() => {
-      customInputRef.value?.focus();
+      customInputRef.value?.focus({ preventScroll: true });
     });
   } else if (open && props.allowAdd) {
     nextTick(() => {
-      addInputRef.value?.focus();
+      addInputRef.value?.focus({ preventScroll: true });
     });
   } else if (open && props.searchable) {
     nextTick(() => {
-      searchInputRef.value?.focus();
+      searchInputRef.value?.focus({ preventScroll: true });
     });
   } else if (!open) {
     // Clear search and add input when dropdown closes
@@ -340,7 +342,7 @@ onUnmounted(() => {
     </button>
 
     <!-- Dropdown menu -->
-    <Teleport to="body" :disabled="!shouldTeleport">
+    <Teleport :to="teleportTarget" :disabled="!shouldTeleport">
       <div
         v-if="isOpen"
         ref="dropdownRef"
@@ -452,6 +454,8 @@ onUnmounted(() => {
 }
 
 .input-field {
-  @apply p-1.5 sm:p-2 border border-border rounded-md bg-bg-secondary text-text-primary focus:border-accent focus:outline-none transition-colors text-xs sm:text-sm;
+  @apply p-1.5 sm:p-2 border border-border bg-bg-secondary text-text-primary focus:border-accent focus:outline-none transition-colors text-xs sm:text-sm;
+  min-height: var(--ui-control-height);
+  border-radius: var(--ui-radius-control);
 }
 </style>

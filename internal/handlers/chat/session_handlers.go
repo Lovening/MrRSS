@@ -8,7 +8,6 @@ import (
 
 	"MrRSS/internal/handlers/core"
 	"MrRSS/internal/handlers/response"
-	"MrRSS/internal/utils/textutil"
 )
 
 // CreateSessionRequest represents the request to create a new chat session
@@ -71,7 +70,7 @@ func HandleListSessions(h *core.Handler, w http.ResponseWriter, r *http.Request)
 // @Success      200  {object}  database.ChatSession  "Created chat session"
 // @Failure      400  {object}  map[string]string  "Bad request (missing article_id)"
 // @Failure      500  {object}  map[string]string  "Internal server error"
-// @Router       /chat/sessions [post]
+// @Router       /ai/chat/session/create [post]
 func HandleCreateSession(h *core.Handler, w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		response.Error(w, nil, http.StatusMethodNotAllowed)
@@ -313,7 +312,7 @@ func HandleListMessages(h *core.Handler, w http.ResponseWriter, r *http.Request)
 		}
 		// Generate HTML for assistant messages
 		if msg.Role == "assistant" {
-			result[i].HTML = textutil.ConvertMarkdownToHTML(msg.Content)
+			result[i].HTML = renderChatHTML(msg.Content)
 		}
 	}
 

@@ -3,6 +3,7 @@ package settings
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -21,6 +22,40 @@ func setupHandlerWithDB(t *testing.T) *core.Handler {
 		t.Fatalf("db Init error: %v", err)
 	}
 	return core.NewHandler(db, nil, nil, nil)
+}
+
+type invalidatingTranslator struct{ invalidations int }
+
+func (t *invalidatingTranslator) Translate(text, targetLang string) (string, error) {
+	return text, nil
+}
+
+func (t *invalidatingTranslator) InvalidateCache() { t.invalidations++ }
+
+func TestTranslationSettingsInvalidateProvider(t *testing.T) {
+	for _, tc := range []struct {
+		key, value string
+		want       int
+	}{
+		{"proxy_enabled", "true", 1},
+		{"google_translate_endpoint", "clients5.google.com", 1},
+		{"microsoft_api_key", "test-key", 1},
+		{"ai_translation_prompt", "Translate clearly", 1},
+		{"theme", "dark", 0},
+	} {
+		t.Run(tc.key, func(t *testing.T) {
+			h := setupHandlerWithDB(t)
+			defer h.DB.Close()
+			translator := &invalidatingTranslator{}
+			h.Translator = translator
+			body, _ := json.Marshal(map[string]string{tc.key: tc.value})
+			w := httptest.NewRecorder()
+			HandleSettings(h, w, httptest.NewRequest(http.MethodPost, "/api/settings", bytes.NewReader(body)))
+			if w.Code != http.StatusOK || translator.invalidations != tc.want {
+				t.Fatalf("status = %d, invalidations = %d, want %d", w.Code, translator.invalidations, tc.want)
+			}
+		})
+	}
 }
 
 func TestHandleSettings_GET(t *testing.T) {
@@ -87,6 +122,54 @@ func TestHandleSettings_POST(t *testing.T) {
 	}
 	if dec != "deadbeef" {
 		t.Fatalf("expected deepl_api_key decrypted to be deadbeef, got %s", dec)
+	}
+}
+
+func TestHandleSettings_POSTUpdatesSystemStartupIntegration(t *testing.T) {
+	h := setupHandlerWithDB(t)
+
+	var enabled bool
+	var calls int
+	h.SetStartupOnBoot = func(value bool) error {
+		enabled = value
+		calls++
+		return nil
+	}
+
+	body, _ := json.Marshal(map[string]string{"startup_on_boot": "true"})
+	req := httptest.NewRequest(http.MethodPost, "/api/settings", bytes.NewReader(body))
+	w := httptest.NewRecorder()
+
+	HandleSettings(h, w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200 OK, got %d: %s", w.Code, w.Body.String())
+	}
+	if calls != 1 || !enabled {
+		t.Fatalf("expected startup integration to be enabled once, calls=%d enabled=%v", calls, enabled)
+	}
+	value, err := h.DB.GetSetting("startup_on_boot")
+	if err != nil || value != "true" {
+		t.Fatalf("expected startup preference to be saved, value=%q err=%v", value, err)
+	}
+}
+
+func TestHandleSettings_POSTDoesNotSaveStartupPreferenceWhenIntegrationFails(t *testing.T) {
+	h := setupHandlerWithDB(t)
+	h.SetStartupOnBoot = func(bool) error { return errors.New("registry unavailable") }
+
+	body, _ := json.Marshal(map[string]string{"startup_on_boot": "true"})
+	req := httptest.NewRequest(http.MethodPost, "/api/settings", bytes.NewReader(body))
+	w := httptest.NewRecorder()
+
+	HandleSettings(h, w, req)
+
+	if w.Code != http.StatusInternalServerError {
+		t.Fatalf("expected 500 Internal Server Error, got %d: %s", w.Code, w.Body.String())
+	}
+	value, _ := h.DB.GetSetting("startup_on_boot")
+	if value == "true" {
+		t.Fatal("startup preference was saved even though OS integration failed")
 	}
 }
 

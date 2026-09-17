@@ -32,6 +32,7 @@ func registerOtherRoutes(mux *http.ServeMux, h *core.Handler) {
 	// Update
 	mux.HandleFunc("/api/check-updates", func(w http.ResponseWriter, r *http.Request) { update.HandleCheckUpdates(h, w, r) })
 	mux.HandleFunc("/api/download-update", func(w http.ResponseWriter, r *http.Request) { update.HandleDownloadUpdate(h, w, r) })
+	mux.HandleFunc("/api/download-update/progress", func(w http.ResponseWriter, r *http.Request) { update.HandleDownloadUpdateProgress(h, w, r) })
 	mux.HandleFunc("/api/install-update", func(w http.ResponseWriter, r *http.Request) { update.HandleInstallUpdate(h, w, r) })
 	mux.HandleFunc("/api/version", func(w http.ResponseWriter, r *http.Request) { update.HandleVersion(h, w, r) })
 
@@ -71,4 +72,7 @@ func registerOtherRoutes(mux *http.ServeMux, h *core.Handler) {
 	mux.HandleFunc("/api/freshrss/sync", func(w http.ResponseWriter, r *http.Request) { freshrssHandler.HandleSync(h, w, r) })
 	mux.HandleFunc("/api/freshrss/sync-feed", func(w http.ResponseWriter, r *http.Request) { freshrssHandler.HandleSyncFeed(h, w, r) })
 	mux.HandleFunc("/api/freshrss/status", func(w http.ResponseWriter, r *http.Request) { freshrssHandler.HandleSyncStatus(h, w, r) })
+	mux.HandleFunc("/api/miniflux/sync", func(w http.ResponseWriter, r *http.Request) { freshrssHandler.HandleSync(h, w, r) })
+	mux.HandleFunc("/api/miniflux/sync-feed", func(w http.ResponseWriter, r *http.Request) { freshrssHandler.HandleSyncFeed(h, w, r) })
+	mux.HandleFunc("/api/miniflux/status", func(w http.ResponseWriter, r *http.Request) { freshrssHandler.HandleSyncStatus(h, w, r) })
 }

@@ -7,6 +7,7 @@ import (
 	"crypto/tls"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"net/url"
 	"os"
@@ -19,41 +20,6 @@ import (
 // opt-in and environment-scoped.
 const InsecureSkipTLSVerifyEnv = "MRRSS_INSECURE_SKIP_TLS_VERIFY"
 
-// SettingsProvider provides access to application settings used by HTTP utilities.
-type SettingsProvider interface {
-	GetSetting(key string) (string, error)
-	GetEncryptedSetting(key string) (string, error)
-}
-
-// BuildGlobalProxyURL constructs the configured global proxy URL from settings.
-func BuildGlobalProxyURL(settings SettingsProvider) string {
-	if settings == nil {
-		return ""
-	}
-
-	proxyEnabled, _ := settings.GetSetting("proxy_enabled")
-	if proxyEnabled != "true" {
-		return ""
-	}
-
-	proxyType, _ := settings.GetSetting("proxy_type")
-	proxyHost, _ := settings.GetSetting("proxy_host")
-	proxyPort, _ := settings.GetSetting("proxy_port")
-	proxyUsername, _ := settings.GetEncryptedSetting("proxy_username")
-	proxyPassword, _ := settings.GetEncryptedSetting("proxy_password")
-
-	return BuildProxyURL(proxyType, proxyHost, proxyPort, proxyUsername, proxyPassword)
-}
-
-// CreateHTTPClientFromSettings creates an HTTP client using the global proxy if enabled.
-func CreateHTTPClientFromSettings(settings SettingsProvider, timeout time.Duration) (*http.Client, error) {
-	return CreateHTTPClient(BuildGlobalProxyURL(settings), timeout)
-}
-
-// CreateHTTPClientWithUserAgentFromSettings creates an HTTP client using the global proxy if enabled and adds a User-Agent.
-func CreateHTTPClientWithUserAgentFromSettings(settings SettingsProvider, timeout time.Duration, userAgent string) (*http.Client, error) {
-	return CreateHTTPClientWithUserAgent(BuildGlobalProxyURL(settings), timeout, userAgent)
-}
 
 // BuildProxyURL constructs a proxy URL from settings.
 func BuildProxyURL(proxyType, proxyHost, proxyPort, username, password string) string {
@@ -61,32 +27,43 @@ func BuildProxyURL(proxyType, proxyHost, proxyPort, username, password string) s
 		return ""
 	}
 
-	auth := ""
+	proxyURL := &url.URL{
+		Scheme: strings.ToLower(proxyType),
+		Host:   net.JoinHostPort(strings.Trim(proxyHost, "[]"), proxyPort),
+	}
+	if proxyURL.Scheme == "" {
+		proxyURL.Scheme = "http"
+	}
 	if username != "" {
 		if password != "" {
-			auth = username + ":" + password + "@"
+			proxyURL.User = url.UserPassword(username, password)
 		} else {
-			auth = username + "@"
+			proxyURL.User = url.User(username)
 		}
 	}
 
-	return fmt.Sprintf("%s://%s%s:%s", proxyType, auth, proxyHost, proxyPort)
+	return proxyURL.String()
 }
 
 // CreateHTTPClient creates an HTTP client with optional proxy support.
 func CreateHTTPClient(proxyURL string, timeout time.Duration) (*http.Client, error) {
-	transport := &http.Transport{
-		TLSClientConfig: &tls.Config{
-			MinVersion:         tls.VersionTLS12,
-			InsecureSkipVerify: insecureSkipTLSVerifyEnabled(),
-		},
-		MaxIdleConns:        50,
-		MaxIdleConnsPerHost: 5,
-		IdleConnTimeout:     90 * time.Second,
-		ForceAttemptHTTP2:   false,
-		WriteBufferSize:     32 * 1024,
-		ReadBufferSize:      32 * 1024,
+	transport := http.DefaultTransport.(*http.Transport).Clone()
+	// Do not inherit environment proxies implicitly. Proxy configuration is
+	// controlled by the application's global proxy settings below.
+	transport.Proxy = nil
+	transport.TLSClientConfig = &tls.Config{
+		MinVersion:         tls.VersionTLS12,
+		InsecureSkipVerify: insecureSkipTLSVerifyEnabled(),
 	}
+	// A non-nil custom TLS config disables HTTP/2 auto-configuration unless
+	// ForceAttemptHTTP2 is enabled. Keep HTTP/2 negotiation while retaining
+	// transparent HTTP/1.1 fallback for compatible API gateways.
+	transport.ForceAttemptHTTP2 = true
+	transport.MaxIdleConns = 50
+	transport.MaxIdleConnsPerHost = 5
+	transport.IdleConnTimeout = 90 * time.Second
+	transport.WriteBufferSize = 32 * 1024
+	transport.ReadBufferSize = 32 * 1024
 
 	if proxyURL != "" {
 		parsedProxy, err := url.Parse(proxyURL)
@@ -100,6 +77,32 @@ func CreateHTTPClient(proxyURL string, timeout time.Duration) (*http.Client, err
 		Transport: transport,
 		Timeout:   timeout,
 	}, nil
+}
+
+// ProxySettingsProvider provides the global proxy settings needed to build an
+// application HTTP client.
+type ProxySettingsProvider interface {
+	GetSetting(key string) (string, error)
+	GetEncryptedSetting(key string) (string, error)
+}
+
+// CreateHTTPClientWithProxySettings creates the canonical application HTTP
+// client and applies the configured global proxy when enabled.
+func CreateHTTPClientWithProxySettings(settings ProxySettingsProvider, timeout time.Duration) (*http.Client, error) {
+	var proxyURL string
+	if settings != nil {
+		proxyEnabled, _ := settings.GetSetting("proxy_enabled")
+		if proxyEnabled == "true" {
+			proxyType, _ := settings.GetSetting("proxy_type")
+			proxyHost, _ := settings.GetSetting("proxy_host")
+			proxyPort, _ := settings.GetSetting("proxy_port")
+			proxyUsername, _ := settings.GetEncryptedSetting("proxy_username")
+			proxyPassword, _ := settings.GetEncryptedSetting("proxy_password")
+			proxyURL = BuildProxyURL(proxyType, proxyHost, proxyPort, proxyUsername, proxyPassword)
+		}
+	}
+
+	return CreateHTTPClient(proxyURL, timeout)
 }
 
 func insecureSkipTLSVerifyEnabled() bool {

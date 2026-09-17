@@ -118,6 +118,8 @@ export function useArticleDetail() {
 
   const showContent = ref(false);
   const articleContent = ref('');
+  let contentRequestId = 0;
+  let contentController: AbortController | null = null;
   const isLoadingContent = ref(false);
   const currentArticleId = ref<number | null>(null);
   const defaultViewMode = ref<ViewMode>('original');
@@ -131,6 +133,13 @@ export function useArticleDetail() {
   watch(
     () => store.currentArticleId,
     async (newId, oldId) => {
+      contentRequestId += 1;
+      contentController?.abort();
+      if (!newId) {
+        articleContent.value = '';
+        currentArticleId.value = null;
+        isLoadingContent.value = false;
+      }
       if (newId && newId !== oldId) {
         // Close image viewer when switching articles
         imageViewerSrc.value = null;
@@ -144,6 +153,7 @@ export function useArticleDetail() {
 
         // Always fetch article content for AI chat and translation features
         await fetchArticleContent();
+        if (store.currentArticleId !== newId) return;
 
         // Check if there's a pending render action from context menu
         if (pendingRenderAction.value) {
@@ -224,19 +234,20 @@ export function useArticleDetail() {
 
   async function toggleReadLater() {
     if (!article.value) return;
-    const newState = !article.value.is_read_later;
-    article.value.is_read_later = newState;
-    // When adding to read later, also mark as unread
-    if (newState) {
-      article.value.is_read = false;
-    }
+    const target = article.value;
+    const newState = !target.is_read_later;
+    target.is_read_later = newState;
     try {
-      await fetch(`/api/articles/toggle-read-later?id=${article.value.id}`, { method: 'POST' });
-      store.fetchUnreadCounts();
+      const response = await fetch(`/api/articles/toggle-read-later?id=${target.id}`, {
+        method: 'POST',
+      });
+      if (!response.ok) throw new Error(`HTTP ${response.status}`);
+      void store.fetchFilterCounts();
     } catch (e) {
       console.error('Error toggling read later:', e);
       // Revert on error
-      article.value.is_read_later = !newState;
+      target.is_read_later = !newState;
+      window.showToast(t('common.errors.savingSettings'), 'error');
     }
   }
 
@@ -275,22 +286,29 @@ export function useArticleDetail() {
     if (!article.value) return;
 
     const loadingArticleId = article.value.id;
+    const requestId = ++contentRequestId;
+    contentController?.abort();
+    contentController = new AbortController();
+    const isCurrent = () =>
+      requestId === contentRequestId && store.currentArticleId === loadingArticleId;
     currentArticleId.value = loadingArticleId; // Track which article we're loading
     isLoadingContent.value = true;
 
     try {
-      const res = await fetch(`/api/articles/content?id=${loadingArticleId}`);
-      if (currentArticleId.value !== loadingArticleId) return;
+      const res = await fetch(`/api/articles/content?id=${loadingArticleId}`, {
+        signal: contentController.signal,
+      });
+      if (!isCurrent()) return;
 
       if (res.ok) {
         const data = await res.json();
-        if (currentArticleId.value !== loadingArticleId) return;
+        if (!isCurrent()) return;
 
         let content = data.content || '';
 
         // Proxy images if media cache is enabled
         const cacheEnabled = await isMediaCacheEnabled();
-        if (currentArticleId.value !== loadingArticleId) return;
+        if (!isCurrent()) return;
 
         if (cacheEnabled && content) {
           // Use feed URL as referer for anti-hotlinking (more reliable than article URL)
@@ -310,10 +328,11 @@ export function useArticleDetail() {
         articleContent.value = '';
       }
     } catch (e) {
+      if (!isCurrent()) return;
       console.error('Error fetching article content:', e);
       articleContent.value = '';
     } finally {
-      if (currentArticleId.value === loadingArticleId) {
+      if (isCurrent()) {
         isLoadingContent.value = false;
       }
     }
@@ -330,6 +349,8 @@ export function useArticleDetail() {
     if (!article.value) return;
 
     const reloadingArticleId = article.value.id;
+    contentRequestId += 1;
+    contentController?.abort();
     articleContent.value = '';
     currentArticleId.value = null;
     isLoadingContent.value = true;
@@ -342,6 +363,9 @@ export function useArticleDetail() {
         throw new Error(`Reload content failed: ${res.status}`);
       }
       if (store.currentArticleId === reloadingArticleId) {
+        window.dispatchEvent(
+          new CustomEvent('article-content-reloaded', { detail: reloadingArticleId })
+        );
         await fetchArticleContent();
       }
     } catch (e) {
@@ -398,13 +422,15 @@ export function useArticleDetail() {
     unwrapImagesFromLinks();
 
     // Get all images in prose content (use more specific selector)
-    const proseContainers = document.querySelectorAll('.prose-content, .prose');
+    const proseContainers = document.querySelectorAll('[data-article-content] .prose-content');
 
     if (proseContainers.length === 0) {
       return;
     }
 
-    const images = document.querySelectorAll<HTMLImageElement>('.prose-content img, .prose img');
+    const images = document.querySelectorAll<HTMLImageElement>(
+      '[data-article-content] .prose-content img'
+    );
 
     // Process images if there are any
     if (images.length > 0) {
@@ -447,7 +473,9 @@ export function useArticleDetail() {
 
               // Collect all images from the article content
               const allImages = Array.from(
-                document.querySelectorAll<HTMLImageElement>('.prose-content img, .prose img')
+                document.querySelectorAll<HTMLImageElement>(
+                  '[data-article-content] .prose-content img'
+                )
               )
                 .filter((img) => {
                   // Filter out small icons
@@ -903,6 +931,8 @@ export function useArticleDetail() {
   });
 
   onBeforeUnmount(() => {
+    contentRequestId += 1;
+    contentController?.abort();
     window.removeEventListener('render-article-content', handleRenderContent);
     window.removeEventListener('explicit-render-action', handleExplicitRenderAction);
     window.removeEventListener('toggle-content-view', handleToggleContentView);

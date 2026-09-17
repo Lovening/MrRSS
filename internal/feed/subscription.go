@@ -113,6 +113,11 @@ func sanitizeFeedXML(xmlContent string) string {
 }
 
 var xmlEncodingRegex = regexp.MustCompile(`(?i)<\?xml\s+[^>]*encoding\s*=\s*["']([^"']+)["']`)
+var xmlEncodingValueRegex = regexp.MustCompile(`(?i)(<\?xml\s+[^>]*encoding\s*=\s*["'])[^"']+(["'])`)
+
+func normalizeDecodedXMLEncoding(content string) string {
+	return xmlEncodingValueRegex.ReplaceAllString(content, `${1}UTF-8${2}`)
+}
 
 func decodeFeedBody(body []byte, contentType string) (string, error) {
 	if len(body) == 0 {
@@ -126,7 +131,7 @@ func decodeFeedBody(body []byte, contentType string) (string, error) {
 			if readErr != nil {
 				return "", readErr
 			}
-			return string(decoded), nil
+			return normalizeDecodedXMLEncoding(string(decoded)), nil
 		}
 	}
 
@@ -138,12 +143,11 @@ func decodeFeedBody(body []byte, contentType string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	return string(decoded), nil
+	return normalizeDecodedXMLEncoding(string(decoded)), nil
 }
 
 // fetchAndSanitizeFeed fetches feed content and sanitizes it before parsing
-func (f *Fetcher) fetchAndSanitizeFeed(ctx context.Context, feed models.Feed) (string, error) {
-	feedURL := feed.URL
+func (f *Fetcher) fetchAndSanitizeFeed(ctx context.Context, feedURL string, sources ...*models.Feed) (string, error) {
 	debugTimer := NewDebugTimer(fmt.Sprintf("FetchSanitize-%s", feedURL), shouldEnableDebugLogging(feedURL))
 	defer debugTimer.End()
 
@@ -151,7 +155,11 @@ func (f *Fetcher) fetchAndSanitizeFeed(ctx context.Context, feed models.Feed) (s
 
 	// Use the feed's HTTP client to fetch content
 	debugTimer.LogWithTime("Getting HTTP client")
-	httpClient, err := f.getHTTPClient(feed)
+	source := models.Feed{URL: feedURL}
+	if len(sources) > 0 && sources[0] != nil {
+		source = *sources[0]
+	}
+	httpClient, err := f.getHTTPClient(source)
 	if err != nil {
 		debugTimer.LogWithTime("Failed to create HTTP client: %v", err)
 		return "", fmt.Errorf("failed to create HTTP client: %w", err)
@@ -216,13 +224,31 @@ func (f *Fetcher) fetchAndSanitizeFeed(ctx context.Context, feed models.Feed) (s
 	return cleanedXML, nil
 }
 
+// AddSubscriptionWithOptions uses the same parser and per-feed network settings
+// as preview and subsequent refreshes.
+func (f *Fetcher) AddSubscriptionWithOptions(ctx context.Context, source models.Feed) (int64, error) {
+	parsed, err := f.ParseFeedWithFeed(ctx, &source, false)
+	if err != nil {
+		return 0, err
+	}
+	if source.Title == "" {
+		source.Title = parsed.Title
+	}
+	source.Link = parsed.Link
+	source.Description = parsed.Description
+	if parsed.Image != nil {
+		source.ImageURL = parsed.Image.URL
+	}
+	return f.db.AddFeed(&source)
+}
+
 // AddSubscription adds a new feed subscription and returns the feed ID.
 func (f *Fetcher) AddSubscription(url string, category string, customTitle string) (int64, error) {
 	utils.DebugLog("AddSubscription: Starting to add feed from URL: %s", url)
 
 	// Try fetching and sanitizing the feed first
 	ctx := context.Background()
-	cleanedXML, err := f.fetchAndSanitizeFeed(ctx, models.Feed{URL: url})
+	cleanedXML, err := f.fetchAndSanitizeFeed(ctx, url)
 	if err != nil {
 		utils.DebugLog("AddSubscription: Failed to fetch feed for %s: %v", url, err)
 		// Fall through to standard parsing which might handle it differently
@@ -619,11 +645,7 @@ func (f *Fetcher) parseFeedWithFeedInternal(ctx context.Context, feed *models.Fe
 	// Try fetching and sanitizing the feed first to handle file:// URLs in atom:link
 	debugTimer.LogWithTime("About to call fetchAndSanitizeFeed")
 	utils.DebugLog("parseFeedWithFeedInternal: Attempting to fetch and sanitize feed for %s", actualURL)
-	cleanedXML, sanitizeErr := f.fetchAndSanitizeFeed(fetchCtx, models.Feed{
-		URL:          actualURL,
-		ProxyEnabled: feed.ProxyEnabled,
-		ProxyURL:     feed.ProxyURL,
-	})
+	cleanedXML, sanitizeErr := f.fetchAndSanitizeFeed(fetchCtx, actualURL, feed)
 	debugTimer.LogWithTime("fetchAndSanitizeFeed completed, err=%v", sanitizeErr)
 
 	if sanitizeErr == nil {

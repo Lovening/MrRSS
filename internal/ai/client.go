@@ -3,6 +3,7 @@ package ai
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -79,6 +80,11 @@ func (c *Client) RequestWithThinking(systemPrompt, userPrompt string) (ResponseR
 
 // RequestWithMessages makes an AI request using messages format
 func (c *Client) RequestWithMessages(messages []map[string]string) (ResponseResult, error) {
+	return c.RequestWithMessagesContext(context.Background(), messages)
+}
+
+// RequestWithMessagesContext propagates cancellation to the provider request.
+func (c *Client) RequestWithMessagesContext(ctx context.Context, messages []map[string]string) (ResponseResult, error) {
 	config := RequestConfig{
 		Model:       c.config.Model,
 		Messages:    messages,
@@ -86,63 +92,60 @@ func (c *Client) RequestWithMessages(messages []map[string]string) (ResponseResu
 		MaxTokens:   2048,
 	}
 
-	return c.RequestWithConfig(config)
+	return c.RequestWithConfigContext(ctx, config)
 }
 
 // RequestWithConfig makes an AI request with full configuration
 func (c *Client) RequestWithConfig(config RequestConfig) (ResponseResult, error) {
+	return c.RequestWithConfigContext(context.Background(), config)
+}
+
+// RequestWithConfigContext makes a cancellable request with full configuration.
+func (c *Client) RequestWithConfigContext(ctx context.Context, config RequestConfig) (ResponseResult, error) {
 	provider := DetectAPIProvider(c.config.Endpoint)
 
-	// Try provider-specific format first based on endpoint detection
+	// An explicit protocol must preserve its own errors; retrying unrelated
+	// formats can hide authentication/rate-limit failures and duplicate requests.
 	switch provider {
 	case "gemini":
-		result, err := c.tryFormat(NewGeminiHandler(), config)
-		if err == nil {
-			return result, nil
-		}
-		// Fall through to other formats
-
+		return c.tryFormat(ctx, NewGeminiHandler(), config)
 	case "anthropic":
-		result, err := c.tryFormat(&AnthropicHandler{}, config)
-		if err == nil {
-			return result, nil
-		}
-		// Fall through to other formats
-
+		return c.tryFormat(ctx, &AnthropicHandler{}, config)
 	case "deepseek":
-		result, err := c.tryFormat(&DeepSeekHandler{}, config)
-		if err == nil {
-			return result, nil
-		}
-		// Fall through to other formats
-
+		return c.tryFormat(ctx, &DeepSeekHandler{}, config)
 	case "ollama":
-		result, err := c.tryFormat(NewOllamaHandler(), config)
-		if err == nil {
-			return result, nil
-		}
-		// Fall through to other formats
+		return c.tryFormat(ctx, NewOllamaHandler(), config)
+	case "openai":
+		return c.tryFormat(ctx, NewOpenAIHandler(), config)
 	}
 
 	// Try OpenAI format (most common, good fallback)
-	result, err := c.tryFormat(NewOpenAIHandler(), config)
+	result, err := c.tryFormat(ctx, NewOpenAIHandler(), config)
 	if err == nil {
 		return result, nil
 	}
 
+	if ctx.Err() != nil {
+		return ResponseResult{}, ctx.Err()
+	}
+
 	// Try other formats as fallback
 	if provider != "gemini" {
-		result, err = c.tryFormat(NewGeminiHandler(), config)
+		result, err = c.tryFormat(ctx, NewGeminiHandler(), config)
 		if err == nil {
 			return result, nil
 		}
 	}
 
 	if provider != "ollama" {
-		result, err = c.tryFormat(NewOllamaHandler(), config)
+		result, err = c.tryFormat(ctx, NewOllamaHandler(), config)
 		if err == nil {
 			return result, nil
 		}
+	}
+
+	if ctx.Err() != nil {
+		return ResponseResult{}, ctx.Err()
 	}
 
 	// All formats failed
@@ -150,7 +153,10 @@ func (c *Client) RequestWithConfig(config RequestConfig) (ResponseResult, error)
 }
 
 // tryFormat attempts to make a request using a specific format handler
-func (c *Client) tryFormat(handler FormatHandler, config RequestConfig) (ResponseResult, error) {
+func (c *Client) tryFormat(ctx context.Context, handler FormatHandler, config RequestConfig) (ResponseResult, error) {
+	if err := ctx.Err(); err != nil {
+		return ResponseResult{}, err
+	}
 	// Build request body
 	requestBody, err := handler.BuildRequest(config)
 	if err != nil {
@@ -163,7 +169,11 @@ func (c *Client) tryFormat(handler FormatHandler, config RequestConfig) (Respons
 	}
 
 	// Format endpoint
-	formattedEndpoint := handler.FormatEndpoint(c.config.Endpoint, c.config.Model)
+	model := config.Model
+	if model == "" {
+		model = c.config.Model
+	}
+	formattedEndpoint := handler.FormatEndpoint(c.config.Endpoint, model)
 
 	// Special handling for Ollama: use /api/chat if messages are provided
 	if _, ok := handler.(*OllamaHandler); ok && len(config.Messages) > 0 {
@@ -172,7 +182,7 @@ func (c *Client) tryFormat(handler FormatHandler, config RequestConfig) (Respons
 	}
 
 	// Send request with formatted endpoint and handler
-	resp, err := c.sendRequestToEndpointWithHandler(jsonBody, formattedEndpoint, handler)
+	resp, err := c.sendRequestToEndpointWithHandler(ctx, jsonBody, formattedEndpoint, handler)
 	if err != nil {
 		return ResponseResult{}, fmt.Errorf("request failed: %w", err)
 	}
@@ -184,7 +194,7 @@ func (c *Client) tryFormat(handler FormatHandler, config RequestConfig) (Respons
 		return ResponseResult{}, fmt.Errorf("failed to read response body: %w", err)
 	}
 	if err := handler.ValidateResponse(resp.StatusCode, bodyBytes); err != nil {
-		return ResponseResult{}, err
+		return ResponseResult{}, fmt.Errorf("AI API HTTP %d: %w", resp.StatusCode, err)
 	}
 
 	// Parse response
@@ -197,7 +207,7 @@ func (c *Client) tryFormat(handler FormatHandler, config RequestConfig) (Respons
 }
 
 // sendRequestToEndpointWithHandler sends the HTTP request to a specific endpoint with handler-specific headers
-func (c *Client) sendRequestToEndpointWithHandler(jsonBody []byte, apiURL string, handler FormatHandler) (*http.Response, error) {
+func (c *Client) sendRequestToEndpointWithHandler(ctx context.Context, jsonBody []byte, apiURL string, handler FormatHandler) (*http.Response, error) {
 	// Validate endpoint URL to prevent SSRF attacks
 	parsedURL, err := url.Parse(apiURL)
 	if err != nil {
@@ -210,7 +220,7 @@ func (c *Client) sendRequestToEndpointWithHandler(jsonBody []byte, apiURL string
 	}
 
 	// Check if this is a Gemini endpoint that needs API key in URL
-	isGeminiEndpoint := IsGeminiEndpoint(apiURL)
+	_, isGeminiEndpoint := handler.(*GeminiHandler)
 
 	// For Gemini API, add API key as URL query parameter instead of Authorization header
 	if isGeminiEndpoint && c.config.APIKey != "" {
@@ -221,7 +231,7 @@ func (c *Client) sendRequestToEndpointWithHandler(jsonBody []byte, apiURL string
 		apiURL = parsedURL.String()
 	}
 
-	req, err := http.NewRequest("POST", apiURL, bytes.NewBuffer(jsonBody))
+	req, err := http.NewRequestWithContext(ctx, "POST", apiURL, bytes.NewBuffer(jsonBody))
 	if err != nil {
 		return nil, fmt.Errorf("failed to create request: %w", err)
 	}

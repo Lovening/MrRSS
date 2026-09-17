@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref } from 'vue';
+import { nextTick, ref } from 'vue';
 import { useI18n } from 'vue-i18n';
 import {
   PhRobot,
@@ -7,6 +7,7 @@ import {
   PhTrash,
   PhBroom,
   PhMagnifyingGlass,
+  PhLightning,
 } from '@phosphor-icons/vue';
 import {
   TipBox,
@@ -14,8 +15,10 @@ import {
   SettingWithToggle,
   NestedSettingsContainer,
   SubSettingItem,
+  TextAreaControl,
 } from '@/components/settings';
 import AIProfileSelector from './AIProfileSelector.vue';
+import AIChatQuickPromptsSettings from './AIChatQuickPromptsSettings.vue';
 import '@/components/settings/styles.css';
 import type { SettingsData } from '@/types/settings';
 
@@ -31,11 +34,23 @@ const emit = defineEmits<{
   'update:settings': [settings: SettingsData];
 }>();
 
-function updateSetting(key: keyof SettingsData, value: any) {
+async function updateSetting(key: keyof SettingsData, value: any) {
+  const anchor =
+    document.activeElement instanceof HTMLElement
+      ? document.activeElement.closest<HTMLElement>('.setting-item')
+      : null;
+  const scrollContainer = anchor?.closest<HTMLElement>('[data-settings-content]');
+  const scrollTop = scrollContainer?.scrollTop;
+
   emit('update:settings', {
     ...props.settings,
     [key]: value,
   });
+
+  await nextTick();
+  if (scrollContainer && scrollTop !== undefined) {
+    scrollContainer.scrollTop = scrollTop;
+  }
 }
 
 const isDeleting = ref(false);
@@ -106,6 +121,14 @@ async function clearAllChatSessions() {
     />
 
     <NestedSettingsContainer v-if="props.settings.ai_chat_enabled">
+      <SettingWithToggle
+        :icon="PhChatCircleText"
+        :title="t('setting.ai.saveChatHistory')"
+        :description="t('setting.ai.saveChatHistoryDesc')"
+        :model-value="props.settings.ai_chat_save_history"
+        @update:model-value="updateSetting('ai_chat_save_history', $event)"
+      />
+
       <SubSettingItem
         :icon="PhRobot"
         :title="t('setting.ai.selectProfile')"
@@ -117,7 +140,35 @@ async function clearAllChatSessions() {
         />
       </SubSettingItem>
 
+      <div class="sub-setting-item-col">
+        <label for="ai-chat-response-preferences" class="font-medium text-xs sm:text-sm">
+          {{ t('setting.ai.responsePreferences') }}
+        </label>
+        <p class="text-text-secondary text-xs">
+          {{ t('setting.ai.responsePreferencesDesc') }}
+        </p>
+        <TextAreaControl
+          id="ai-chat-response-preferences"
+          :model-value="props.settings.ai_chat_response_preferences"
+          :placeholder="t('setting.ai.responsePreferencesPlaceholder')"
+          :rows="4"
+          @update:model-value="updateSetting('ai_chat_response_preferences', $event)"
+        />
+      </div>
+
       <SubSettingItem
+        :icon="PhLightning"
+        :title="t('setting.ai.quickPrompts')"
+        :description="t('setting.ai.quickPromptsDesc')"
+      >
+        <AIChatQuickPromptsSettings
+          :model-value="props.settings.ai_chat_quick_prompts"
+          @update:model-value="updateSetting('ai_chat_quick_prompts', $event)"
+        />
+      </SubSettingItem>
+
+      <SubSettingItem
+        v-if="props.settings.ai_chat_save_history"
         :icon="PhTrash"
         :title="t('setting.ai.clearAllChats')"
         :description="t('setting.ai.clearAllChatsDesc')"

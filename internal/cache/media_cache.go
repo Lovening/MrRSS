@@ -2,6 +2,7 @@
 package cache
 
 import (
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
@@ -18,16 +19,10 @@ import (
 // MediaCache handles caching of images and videos to work around anti-hotlinking
 type MediaCache struct {
 	cacheDir string
-	client   *http.Client
 }
 
 // NewMediaCache creates a new media cache instance
 func NewMediaCache(cacheDir string) (*MediaCache, error) {
-	return NewMediaCacheWithClient(cacheDir, nil)
-}
-
-// NewMediaCacheWithClient creates a new media cache instance with an optional HTTP client.
-func NewMediaCacheWithClient(cacheDir string, client *http.Client) (*MediaCache, error) {
 	// Create cache directory if it doesn't exist
 	if err := os.MkdirAll(cacheDir, 0755); err != nil {
 		return nil, fmt.Errorf("failed to create cache directory: %w", err)
@@ -35,7 +30,6 @@ func NewMediaCacheWithClient(cacheDir string, client *http.Client) (*MediaCache,
 
 	return &MediaCache{
 		cacheDir: cacheDir,
-		client:   client,
 	}, nil
 }
 
@@ -79,7 +73,7 @@ func (mc *MediaCache) Exists(url string) bool {
 }
 
 // Get retrieves cached media or downloads it if not cached
-func (mc *MediaCache) Get(url, referer string) ([]byte, string, error) {
+func (mc *MediaCache) Get(ctx context.Context, client *http.Client, url, referer string) ([]byte, string, error) {
 	// Check if already cached
 	cachedPath, found := mc.findCachedFile(url)
 	if found {
@@ -92,7 +86,7 @@ func (mc *MediaCache) Get(url, referer string) ([]byte, string, error) {
 	}
 
 	// Download and cache
-	data, contentType, err := mc.download(url, referer)
+	data, contentType, err := mc.download(ctx, client, url, referer)
 	if err != nil {
 		return nil, "", fmt.Errorf("failed to download media: %w", err)
 	}
@@ -115,15 +109,8 @@ func (mc *MediaCache) Get(url, referer string) ([]byte, string, error) {
 }
 
 // download fetches media from the given URL with proper headers
-func (mc *MediaCache) download(url, referer string) ([]byte, string, error) {
-	client := mc.client
-	if client == nil {
-		client = &http.Client{
-			Timeout: 30 * time.Second,
-		}
-	}
-
-	req, err := http.NewRequest("GET", url, nil)
+func (mc *MediaCache) download(ctx context.Context, client *http.Client, url, referer string) ([]byte, string, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {
 		return nil, "", fmt.Errorf("failed to create request: %w", err)
 	}

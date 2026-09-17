@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { useAppStore } from './stores/app';
+import { getAutoRefreshInterval, useAppStore } from './stores/app';
 import { useI18n } from 'vue-i18n';
 import Sidebar from './components/sidebar/Sidebar.vue';
 import ArticleList from './components/article/ArticleList.vue';
@@ -15,20 +15,24 @@ import ConfirmDialog from './components/modals/common/ConfirmDialog.vue';
 import InputDialog from './components/modals/common/InputDialog.vue';
 import MultiSelectDialog from './components/modals/common/MultiSelectDialog.vue';
 import Toast from './components/common/Toast.vue';
-import { onMounted, onUnmounted, ref, computed, watchEffect } from 'vue';
+import { onMounted, onUnmounted, ref, computed, watch, watchEffect } from 'vue';
 import { useNotifications } from './composables/ui/useNotifications';
 import { useKeyboardShortcuts } from './composables/ui/useKeyboardShortcuts';
 import { useContextMenu } from './composables/ui/useContextMenu';
 import { useResizablePanels } from './composables/ui/useResizablePanels';
+import { useArticleTableSplit } from './composables/ui/useArticleTableSplit';
 import { useWindowState } from './composables/core/useWindowState';
 import { useAppUpdates } from './composables/core/useAppUpdates';
 import { useSettings } from './composables/core/useSettings';
+import { useCustomCSS } from './composables/ui/useCustomCSS';
 import { resolveFontFamily } from './utils/fontDetector';
 import type { Feed } from './types/models';
+import type { TabName } from './types/settings';
 
 const store = useAppStore();
 const { t } = useI18n();
 const { settings } = useSettings();
+useCustomCSS(() => settings.value.custom_css_file);
 
 const uiFontSize = computed(() => {
   const value = Number(settings.value.ui_font_size);
@@ -43,6 +47,7 @@ watchEffect(() => {
 });
 
 onUnmounted(() => {
+  store.startAutoRefresh(0);
   const rootStyle = document.documentElement.style;
   rootStyle.removeProperty('--ui-font-family');
   rootStyle.removeProperty('--ui-font-size');
@@ -53,15 +58,23 @@ const showAddFeed = ref(false);
 const showEditFeed = ref(false);
 const feedToEdit = ref<Feed | null>(null);
 const showSettings = ref(false);
+const settingsInitialTab = ref<TabName>('general');
 const showDiscoverBlogs = ref(false);
 const feedToDiscover = ref<Feed | null>(null);
-const isSidebarOpen = ref(true);
+const isSidebarOpen = ref(localStorage.getItem('FeedListExpanded') !== 'false');
+watch(isSidebarOpen, (expanded) => {
+  localStorage.setItem('FeedListExpanded', String(expanded));
+});
 
 // Check if we're in image gallery mode
 const isImageGalleryMode = computed(() => store.currentFilter === 'imageGallery');
 
 // Check if we're in card mode
 const isCardMode = ref(false);
+const isTableMode = ref(false);
+const readerPanes = ref<HTMLElement | null>(null);
+const tableSplit = useArticleTableSplit(readerPanes);
+watch([isTableMode, isImageGalleryMode], () => tableSplit.stop());
 
 // Use composables
 const {
@@ -91,6 +104,10 @@ const {
   downloadingUpdate,
   installingUpdate,
   downloadProgress,
+  downloadProgressKnown,
+  downloadBytesWritten,
+  downloadTotalBytes,
+  downloadErrorCode,
 } = useAppUpdates();
 
 // Update dialog state
@@ -101,7 +118,7 @@ const windowState = useWindowState();
 windowState.init();
 
 // Initialize keyboard shortcuts
-const { shortcuts } = useKeyboardShortcuts({
+const { shortcuts, shortcutsEnabled } = useKeyboardShortcuts({
   onOpenSettings: () => {
     showSettings.value = true;
   },
@@ -124,6 +141,7 @@ onMounted(async () => {
 
   // Load remaining settings (theme and other settings are already loaded in main.ts)
   let updateInterval = 10;
+  let refreshMode = 'fixed';
   let lastGlobalRefresh = '';
   let updateCheckEnabled = true;
 
@@ -135,6 +153,7 @@ onMounted(async () => {
     const layoutMode = data.layout_mode || 'normal';
     const isCompactModeLayout = layoutMode === 'compact';
     isCardMode.value = layoutMode === 'card';
+    isTableMode.value = layoutMode === 'table';
     // First set the compact mode, then set the width (order matters)
     setCompactMode(isCompactModeLayout);
     setArticleListWidth(isCompactModeLayout ? 500 : 350);
@@ -148,16 +167,19 @@ onMounted(async () => {
     }
 
     // Apply other settings
+    refreshMode = data.refresh_mode || 'fixed';
     if (data.update_interval) {
       updateInterval = parseInt(data.update_interval);
-      store.startAutoRefresh(updateInterval);
     }
+    store.startAutoRefresh(getAutoRefreshInterval(refreshMode, updateInterval));
 
     if (data.last_global_refresh) {
       lastGlobalRefresh = data.last_global_refresh;
     }
 
     updateCheckEnabled = data.update_check_enabled !== 'false';
+
+    shortcutsEnabled.value = data.shortcuts_enabled !== 'false';
 
     // Load saved shortcuts
     if (data.shortcuts) {
@@ -233,7 +255,8 @@ onMounted(async () => {
         console.error('Error fetching latest last_global_refresh:', e);
       }
 
-      const shouldRefresh = shouldTriggerRefresh(latestLastGlobalRefresh, updateInterval);
+      const shouldRefresh =
+        refreshMode === 'fixed' && shouldTriggerRefresh(latestLastGlobalRefresh, updateInterval);
       if (shouldRefresh) {
         store.refreshFeeds();
       }
@@ -250,7 +273,9 @@ window.addEventListener('show-edit-feed', (e) => {
   feedToEdit.value = customEvent.detail;
   showEditFeed.value = true;
 });
-window.addEventListener('show-settings', () => {
+window.addEventListener('show-settings', (e) => {
+  const requestedTab = (e as CustomEvent<{ tab?: TabName }>).detail?.tab;
+  settingsInitialTab.value = requestedTab || 'general';
   showSettings.value = true;
 });
 window.addEventListener('show-discover-blogs', (e) => {
@@ -265,6 +290,7 @@ window.addEventListener('layout-mode-changed', (e) => {
   const mode = customEvent.detail.mode;
   const isCompactModeLayout = mode === 'compact';
   isCardMode.value = mode === 'card';
+  isTableMode.value = mode === 'table';
   setCompactMode(isCompactModeLayout);
   if (!isCardMode.value) {
     setArticleListWidth(isCompactModeLayout ? 600 : 400);
@@ -333,16 +359,40 @@ function onFeedUpdated(): void {
     </template>
 
     <!-- Show ArticleList and ArticleDetail when not in image gallery mode -->
-    <template v-else>
+    <div
+      v-else
+      ref="readerPanes"
+      class="reader-panes"
+      :class="{ 'table-mode': isTableMode }"
+      :style="{ '--table-list-height': tableSplit.split.value + '%' }"
+    >
       <ArticleList :is-sidebar-open="isSidebarOpen" @toggle-sidebar="toggleSidebar" />
 
       <!-- Hide resizer and ArticleDetail when in card mode -->
       <template v-if="!isCardMode">
-        <div class="resizer hidden md:block" @mousedown="startResizeArticleList"></div>
+        <div
+          v-if="isTableMode"
+          class="table-resizer hidden md:block focus-visible:outline-2 focus-visible:outline-accent"
+          role="separator"
+          tabindex="0"
+          aria-orientation="horizontal"
+          :aria-label="t('article.table.resize')"
+          :aria-valuenow="tableSplit.split.value"
+          :aria-valuemin="25"
+          :aria-valuemax="75"
+          @pointerdown="tableSplit.start"
+          @keydown="tableSplit.keydown"
+        ></div>
+        <div v-else class="resizer hidden md:block" @mousedown="startResizeArticleList"></div>
 
         <ArticleDetail />
       </template>
-    </template>
+    </div>
+    <div
+      v-if="tableSplit.resizing.value"
+      class="fixed inset-0 z-50 cursor-row-resize"
+      aria-hidden="true"
+    ></div>
 
     <AddFeedModal v-if="showAddFeed" @close="showAddFeed = false" @added="onFeedAdded" />
     <EditFeedModal
@@ -351,7 +401,11 @@ function onFeedUpdated(): void {
       @close="showEditFeed = false"
       @updated="onFeedUpdated"
     />
-    <SettingsModal v-if="showSettings" @close="showSettings = false" />
+    <SettingsModal
+      v-if="showSettings"
+      :initial-tab="settingsInitialTab"
+      @close="showSettings = false"
+    />
     <DiscoverFeedsModal
       v-if="showDiscoverBlogs && feedToDiscover"
       :feed="feedToDiscover"
@@ -365,6 +419,10 @@ function onFeedUpdated(): void {
       :downloading-update="downloadingUpdate"
       :installing-update="installingUpdate"
       :download-progress="downloadProgress"
+      :download-progress-known="downloadProgressKnown"
+      :download-bytes-written="downloadBytesWritten"
+      :download-total-bytes="downloadTotalBytes"
+      :download-error-code="downloadErrorCode"
       @close="showUpdateDialog = false"
       @update="downloadAndInstallUpdate"
     />
@@ -469,6 +527,34 @@ function onFeedUpdated(): void {
   z-index: 10;
   margin-left: -2px;
   margin-right: -2px;
+}
+.reader-panes {
+  display: contents;
+}
+@media (min-width: 768px) {
+  .reader-panes.table-mode {
+    display: flex;
+    flex: 1;
+    flex-direction: column;
+    min-width: 0;
+    min-height: 0;
+  }
+  .reader-panes.table-mode > :deep(main) {
+    height: auto;
+    min-height: 0;
+    flex: 1 1 0;
+  }
+  .table-resizer {
+    height: 4px;
+    flex-shrink: 0;
+    cursor: row-resize;
+    background-color: var(--color-border);
+    touch-action: none;
+  }
+  .table-resizer:hover,
+  .table-resizer:focus-visible {
+    background-color: var(--color-accent);
+  }
 }
 .resizer:hover,
 .resizer:active {

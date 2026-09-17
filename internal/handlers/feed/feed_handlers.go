@@ -9,6 +9,7 @@ import (
 
 	"MrRSS/internal/handlers/core"
 	"MrRSS/internal/handlers/response"
+	"MrRSS/internal/models"
 	"MrRSS/internal/rsshub"
 	"MrRSS/internal/utils/urlutil"
 )
@@ -136,7 +137,9 @@ func HandleAddFeed(h *core.Handler, w http.ResponseWriter, r *http.Request) {
 		feedID, err = h.Fetcher.AddRSSHubSubscription(route, req.Category, req.Title)
 	} else {
 		// Add feed using URL
-		feedID, err = h.Fetcher.AddSubscription(req.URL, req.Category, req.Title)
+		ctx, cancel := context.WithTimeout(r.Context(), 60*time.Second)
+		defer cancel()
+		feedID, err = h.Fetcher.AddSubscriptionWithOptions(ctx, models.Feed{URL: req.URL, Category: req.Category, Title: req.Title, ProxyEnabled: req.ProxyEnabled, ProxyURL: req.ProxyURL})
 	}
 
 	if err != nil {
@@ -386,6 +389,7 @@ func HandleUpdateFeed(h *core.Handler, w http.ResponseWriter, r *http.Request) {
 // @Accept       json
 // @Produce      json
 // @Param        id   query     int64   true  "Feed ID"
+// @Param        reset_read query bool false "Reset existing visible articles to unread before refreshing"
 // @Success      200  {string}  string  "Feed refresh started successfully"
 // @Failure      400  {object}  map[string]string  "Bad request (invalid feed ID)"
 // @Failure      404  {object}  map[string]string  "Feed not found"
@@ -407,6 +411,21 @@ func HandleRefreshFeed(h *core.Handler, w http.ResponseWriter, r *http.Request) 
 	if err != nil {
 		response.Error(w, err, http.StatusNotFound)
 		return
+	}
+
+	resetRead := false
+	if resetReadValue := r.URL.Query().Get("reset_read"); resetReadValue != "" {
+		resetRead, err = strconv.ParseBool(resetReadValue)
+		if err != nil {
+			response.Error(w, err, http.StatusBadRequest)
+			return
+		}
+	}
+	if resetRead {
+		if err := h.DB.MarkAllAsUnreadForFeed(id); err != nil {
+			response.Error(w, err, http.StatusInternalServerError)
+			return
+		}
 	}
 
 	// Refresh the feed in background with progress tracking (manual = queue head)

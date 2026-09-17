@@ -21,6 +21,9 @@ type Defaults struct {
 	AIAPIKey                      string `json:"ai_api_key"`
 	AIChatEnabled                 bool   `json:"ai_chat_enabled"`
 	AIChatProfileId               string `json:"ai_chat_profile_id"`
+	AIChatQuickPrompts            string `json:"ai_chat_quick_prompts"`
+	AIChatResponsePreferences     string `json:"ai_chat_response_preferences"`
+	AIChatSaveHistory             bool   `json:"ai_chat_save_history"`
 	AICustomHeaders               string `json:"ai_custom_headers"`
 	AIEndpoint                    string `json:"ai_endpoint"`
 	AIModel                       string `json:"ai_model"`
@@ -32,11 +35,16 @@ type Defaults struct {
 	AITranslationPrompt           string `json:"ai_translation_prompt"`
 	AIUsageLimit                  string `json:"ai_usage_limit"`
 	AIUsageTokens                 string `json:"ai_usage_tokens"`
+	ArticleTableColumns           string `json:"article_table_columns"`
+	ArticleToolbarLayout          string `json:"article_toolbar_layout"`
 	AutoCleanupEnabled            bool   `json:"auto_cleanup_enabled"`
+	AutoMarkReadDays              int    `json:"auto_mark_read_days"`
+	AutoMarkReadEnabled           bool   `json:"auto_mark_read_enabled"`
 	AutoShowAllContent            bool   `json:"auto_show_all_content"`
 	BaiduAppId                    string `json:"baidu_app_id"`
 	BaiduSecretKey                string `json:"baidu_secret_key"`
 	CloseToTray                   bool   `json:"close_to_tray"`
+	ConfirmMarkAsRead             bool   `json:"confirm_mark_as_read"`
 	ContentFontFamily             string `json:"content_font_family"`
 	ContentFontSize               int    `json:"content_font_size"`
 	ContentLineHeight             string `json:"content_line_height"`
@@ -50,6 +58,7 @@ type Defaults struct {
 	CustomTranslationName         string `json:"custom_translation_name"`
 	CustomTranslationResponsePath string `json:"custom_translation_response_path"`
 	CustomTranslationTimeout      int    `json:"custom_translation_timeout"`
+	DateFormat                    string `json:"date_format"`
 	DeeplAPIKey                   string `json:"deepl_api_key"`
 	DeeplEndpoint                 string `json:"deepl_endpoint"`
 	DefaultViewMode               string `json:"default_view_mode"`
@@ -59,6 +68,7 @@ type Defaults struct {
 	FreshRSSAutoSyncInterval      int    `json:"freshrss_auto_sync_interval"`
 	FreshRSSEnabled               bool   `json:"freshrss_enabled"`
 	FreshRSSLastSyncTime          string `json:"freshrss_last_sync_time"`
+	FreshRSSProvider              string `json:"freshrss_provider"`
 	FreshRSSServerUrl             string `json:"freshrss_server_url"`
 	FreshRSSSyncOnStartup         bool   `json:"freshrss_sync_on_startup"`
 	FreshRSSUsername              string `json:"freshrss_username"`
@@ -80,6 +90,13 @@ type Defaults struct {
 	MicrosoftAPIKey               string `json:"microsoft_api_key"`
 	MicrosoftEndpoint             string `json:"microsoft_endpoint"`
 	MicrosoftRegion               string `json:"microsoft_region"`
+	MinifluxAPIPassword           string `json:"miniflux_api_password"`
+	MinifluxAutoSyncInterval      int    `json:"miniflux_auto_sync_interval"`
+	MinifluxEnabled               bool   `json:"miniflux_enabled"`
+	MinifluxLastSyncTime          string `json:"miniflux_last_sync_time"`
+	MinifluxServerUrl             string `json:"miniflux_server_url"`
+	MinifluxSyncOnStartup         bool   `json:"miniflux_sync_on_startup"`
+	MinifluxUsername              string `json:"miniflux_username"`
 	NetworkBandwidthMbps          string `json:"network_bandwidth_mbps"`
 	NetworkLatencyMs              string `json:"network_latency_ms"`
 	NetworkSpeed                  string `json:"network_speed"`
@@ -96,16 +113,28 @@ type Defaults struct {
 	ProxyType                     string `json:"proxy_type"`
 	ProxyUsername                 string `json:"proxy_username"`
 	RefreshMode                   string `json:"refresh_mode"`
+	RelativeTime                  bool   `json:"relative_time"`
+	RememberArticlePosition       bool   `json:"remember_article_position"`
 	RetryTimeoutSeconds           int    `json:"retry_timeout_seconds"`
 	RsshubAPIKey                  string `json:"rsshub_api_key"`
 	RsshubEnabled                 bool   `json:"rsshub_enabled"`
 	RsshubEndpoint                string `json:"rsshub_endpoint"`
 	Rules                         string `json:"rules"`
+	ScrollMarkAsRead              bool   `json:"scroll_mark_as_read"`
 	Shortcuts                     string `json:"shortcuts"`
 	ShortcutsEnabled              bool   `json:"shortcuts_enabled"`
 	ShowArticlePreviewImages      bool   `json:"show_article_preview_images"`
 	ShowFloatingToc               bool   `json:"show_floating_toc"`
 	ShowHiddenArticles            bool   `json:"show_hidden_articles"`
+	ShowUnreadCounts              bool   `json:"show_unread_counts"`
+	SidebarCategoryOrder          string `json:"sidebar_category_order"`
+	SidebarPinnedItems            string `json:"sidebar_pinned_items"`
+	SidebarSortMode               string `json:"sidebar_sort_mode"`
+	SiyuanAPIToken                string `json:"siyuan_api_token"`
+	SiyuanEnabled                 bool   `json:"siyuan_enabled"`
+	SiyuanEndpoint                string `json:"siyuan_endpoint"`
+	SiyuanFolder                  string `json:"siyuan_folder"`
+	SiyuanNotebookId              string `json:"siyuan_notebook_id"`
 	StartupOnBoot                 bool   `json:"startup_on_boot"`
 	SummaryEnabled                bool   `json:"summary_enabled"`
 	SummaryLength                 string `json:"summary_length"`
@@ -116,9 +145,11 @@ type Defaults struct {
 	TencentSecretId               string `json:"tencent_secret_id"`
 	TencentSecretKey              string `json:"tencent_secret_key"`
 	Theme                         string `json:"theme"`
+	TimeFormat                    string `json:"time_format"`
 	TranslationEnabled            bool   `json:"translation_enabled"`
 	TranslationOnlyMode           bool   `json:"translation_only_mode"`
 	TranslationProvider           string `json:"translation_provider"`
+	TranslationTriggerMode        string `json:"translation_trigger_mode"`
 	UiFontFamily                  string `json:"ui_font_family"`
 	UiFontSize                    int    `json:"ui_font_size"`
 	UpdateCheckEnabled            bool   `json:"update_check_enabled"`
@@ -155,6 +186,12 @@ func GetString(key string) string {
 		return strconv.FormatBool(defaults.AIChatEnabled)
 	case "ai_chat_profile_id":
 		return defaults.AIChatProfileId
+	case "ai_chat_quick_prompts":
+		return defaults.AIChatQuickPrompts
+	case "ai_chat_response_preferences":
+		return defaults.AIChatResponsePreferences
+	case "ai_chat_save_history":
+		return strconv.FormatBool(defaults.AIChatSaveHistory)
 	case "ai_custom_headers":
 		return defaults.AICustomHeaders
 	case "ai_endpoint":
@@ -177,8 +214,16 @@ func GetString(key string) string {
 		return defaults.AIUsageLimit
 	case "ai_usage_tokens":
 		return defaults.AIUsageTokens
+	case "article_table_columns":
+		return defaults.ArticleTableColumns
+	case "article_toolbar_layout":
+		return defaults.ArticleToolbarLayout
 	case "auto_cleanup_enabled":
 		return strconv.FormatBool(defaults.AutoCleanupEnabled)
+	case "auto_mark_read_days":
+		return strconv.Itoa(defaults.AutoMarkReadDays)
+	case "auto_mark_read_enabled":
+		return strconv.FormatBool(defaults.AutoMarkReadEnabled)
 	case "auto_show_all_content":
 		return strconv.FormatBool(defaults.AutoShowAllContent)
 	case "baidu_app_id":
@@ -187,6 +232,8 @@ func GetString(key string) string {
 		return defaults.BaiduSecretKey
 	case "close_to_tray":
 		return strconv.FormatBool(defaults.CloseToTray)
+	case "confirm_mark_as_read":
+		return strconv.FormatBool(defaults.ConfirmMarkAsRead)
 	case "content_font_family":
 		return defaults.ContentFontFamily
 	case "content_font_size":
@@ -213,6 +260,8 @@ func GetString(key string) string {
 		return defaults.CustomTranslationResponsePath
 	case "custom_translation_timeout":
 		return strconv.Itoa(defaults.CustomTranslationTimeout)
+	case "date_format":
+		return defaults.DateFormat
 	case "deepl_api_key":
 		return defaults.DeeplAPIKey
 	case "deepl_endpoint":
@@ -231,6 +280,8 @@ func GetString(key string) string {
 		return strconv.FormatBool(defaults.FreshRSSEnabled)
 	case "freshrss_last_sync_time":
 		return defaults.FreshRSSLastSyncTime
+	case "freshrss_provider":
+		return defaults.FreshRSSProvider
 	case "freshrss_server_url":
 		return defaults.FreshRSSServerUrl
 	case "freshrss_sync_on_startup":
@@ -273,6 +324,20 @@ func GetString(key string) string {
 		return defaults.MicrosoftEndpoint
 	case "microsoft_region":
 		return defaults.MicrosoftRegion
+	case "miniflux_api_password":
+		return defaults.MinifluxAPIPassword
+	case "miniflux_auto_sync_interval":
+		return strconv.Itoa(defaults.MinifluxAutoSyncInterval)
+	case "miniflux_enabled":
+		return strconv.FormatBool(defaults.MinifluxEnabled)
+	case "miniflux_last_sync_time":
+		return defaults.MinifluxLastSyncTime
+	case "miniflux_server_url":
+		return defaults.MinifluxServerUrl
+	case "miniflux_sync_on_startup":
+		return strconv.FormatBool(defaults.MinifluxSyncOnStartup)
+	case "miniflux_username":
+		return defaults.MinifluxUsername
 	case "network_bandwidth_mbps":
 		return defaults.NetworkBandwidthMbps
 	case "network_latency_ms":
@@ -305,6 +370,10 @@ func GetString(key string) string {
 		return defaults.ProxyUsername
 	case "refresh_mode":
 		return defaults.RefreshMode
+	case "relative_time":
+		return strconv.FormatBool(defaults.RelativeTime)
+	case "remember_article_position":
+		return strconv.FormatBool(defaults.RememberArticlePosition)
 	case "retry_timeout_seconds":
 		return strconv.Itoa(defaults.RetryTimeoutSeconds)
 	case "rsshub_api_key":
@@ -315,6 +384,8 @@ func GetString(key string) string {
 		return defaults.RsshubEndpoint
 	case "rules":
 		return defaults.Rules
+	case "scroll_mark_as_read":
+		return strconv.FormatBool(defaults.ScrollMarkAsRead)
 	case "shortcuts":
 		return defaults.Shortcuts
 	case "shortcuts_enabled":
@@ -325,6 +396,24 @@ func GetString(key string) string {
 		return strconv.FormatBool(defaults.ShowFloatingToc)
 	case "show_hidden_articles":
 		return strconv.FormatBool(defaults.ShowHiddenArticles)
+	case "show_unread_counts":
+		return strconv.FormatBool(defaults.ShowUnreadCounts)
+	case "sidebar_category_order":
+		return defaults.SidebarCategoryOrder
+	case "sidebar_pinned_items":
+		return defaults.SidebarPinnedItems
+	case "sidebar_sort_mode":
+		return defaults.SidebarSortMode
+	case "siyuan_api_token":
+		return defaults.SiyuanAPIToken
+	case "siyuan_enabled":
+		return strconv.FormatBool(defaults.SiyuanEnabled)
+	case "siyuan_endpoint":
+		return defaults.SiyuanEndpoint
+	case "siyuan_folder":
+		return defaults.SiyuanFolder
+	case "siyuan_notebook_id":
+		return defaults.SiyuanNotebookId
 	case "startup_on_boot":
 		return strconv.FormatBool(defaults.StartupOnBoot)
 	case "summary_enabled":
@@ -345,12 +434,16 @@ func GetString(key string) string {
 		return defaults.TencentSecretKey
 	case "theme":
 		return defaults.Theme
+	case "time_format":
+		return defaults.TimeFormat
 	case "translation_enabled":
 		return strconv.FormatBool(defaults.TranslationEnabled)
 	case "translation_only_mode":
 		return strconv.FormatBool(defaults.TranslationOnlyMode)
 	case "translation_provider":
 		return defaults.TranslationProvider
+	case "translation_trigger_mode":
+		return defaults.TranslationTriggerMode
 	case "ui_font_family":
 		return defaults.UiFontFamily
 	case "ui_font_size":

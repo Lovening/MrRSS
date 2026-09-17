@@ -34,26 +34,9 @@ func (db *DB) SaveArticle(article *models.Article) error {
 }
 
 // SaveArticles saves multiple articles in a transaction.
-// Includes progressive cleanup check to prevent database from exceeding size limit during refresh.
+// Cleanup is scheduled by the fetcher after refresh tasks, never by individual saves.
 func (db *DB) SaveArticles(ctx context.Context, articles []*models.Article) error {
 	db.WaitForReady()
-
-	// Progressive cleanup: check if we need to clean up before saving
-	if len(articles) > 10 {
-		// Only check for larger batches to avoid overhead
-		shouldCleanup, _ := db.ShouldCleanupBeforeSave()
-		if shouldCleanup {
-			log.Printf("Database approaching size limit, running progressive cleanup...")
-			go func() {
-				deleted, err := db.CleanupBySize()
-				if err != nil {
-					log.Printf("Progressive cleanup error: %v", err)
-				} else if deleted > 0 {
-					log.Printf("Progressive cleanup removed %d articles", deleted)
-				}
-			}()
-		}
-	}
 
 	for attempt := 1; attempt <= saveArticlesMaxAttempts; attempt++ {
 		err := db.saveArticlesOnce(ctx, articles)
@@ -223,11 +206,16 @@ func isRetryableSQLiteWriteError(err error) bool {
 // GetArticles retrieves articles with filtering, pagination, and sorting.
 // Optimized to filter feeds first for category queries, reducing JOIN overhead.
 func (db *DB) GetArticles(filter string, feedID int64, category string, showHidden bool, limit, offset int) ([]models.Article, error) {
-	return db.GetArticlesWithUnreadFilter(filter, feedID, category, showHidden, false, limit, offset)
+	return db.GetArticlesWithUnreadFilterSorted(filter, feedID, category, showHidden, false, "newest", limit, offset)
 }
 
 // GetArticlesWithUnreadFilter returns articles with optional read-state filtering.
 func (db *DB) GetArticlesWithUnreadFilter(filter string, feedID int64, category string, showHidden bool, onlyUnread bool, limit, offset int) ([]models.Article, error) {
+	return db.GetArticlesWithUnreadFilterSorted(filter, feedID, category, showHidden, onlyUnread, "newest", limit, offset)
+}
+
+// GetArticlesWithUnreadFilterSorted returns articles in a validated publication-time order.
+func (db *DB) GetArticlesWithUnreadFilterSorted(filter string, feedID int64, category string, showHidden bool, onlyUnread bool, sortOrder string, limit, offset int, groupBy ...string) ([]models.Article, error) {
 	db.WaitForReady()
 
 	// Optimization: For category queries, first get the feed IDs, then query articles
@@ -303,7 +291,7 @@ func (db *DB) GetArticlesWithUnreadFilter(filter string, feedID int64, category 
 		}
 	}
 
-	if onlyUnread && filter != "unread" {
+	if onlyUnread && filter != "unread" && filter != "favorites" {
 		whereClauses = append(whereClauses, "a.is_read = 0")
 	}
 
@@ -328,7 +316,17 @@ func (db *DB) GetArticlesWithUnreadFilter(filter string, feedID int64, category 
 			query += " AND " + whereClauses[i]
 		}
 	}
-	query += " ORDER BY a.published_at DESC LIMIT ? OFFSET ?"
+	direction := "DESC"
+	if sortOrder == "oldest" {
+		direction = "ASC"
+	}
+	query += " ORDER BY "
+	// Group before LIMIT/OFFSET so a feed stays contiguous across page boundaries.
+	// IDs provide stable group order, independent of duplicate or renamed titles.
+	if len(groupBy) > 0 && groupBy[0] == "feed" {
+		query += "a.feed_id ASC, "
+	}
+	query += "a.published_at " + direction + ", a.id " + direction + " LIMIT ? OFFSET ?"
 	args = append(args, limit, offset)
 
 	rows, err := db.Query(query, args...)
@@ -368,7 +366,7 @@ func (db *DB) GetArticlesWithUnreadFilter(filter string, feedID int64, category 
 func (db *DB) GetArticleByID(id int64) (*models.Article, error) {
 	db.WaitForReady()
 	query := `
-		SELECT a.id, a.feed_id, a.title, a.url, a.image_url, a.audio_url, a.video_url, a.published_at, a.is_read, a.is_favorite, a.is_hidden, a.is_read_later, a.translated_title, a.summary, a.freshrss_item_id, f.title, a.author
+		SELECT a.id, a.feed_id, a.title, a.url, a.image_url, a.audio_url, a.video_url, a.published_at, a.is_read, a.is_favorite, a.is_hidden, a.is_read_later, a.translated_title, a.summary, a.freshrss_item_id, f.title, a.author, a.original_summary
 		FROM articles a
 		JOIN feeds f ON a.feed_id = f.id
 		WHERE a.id = ?
@@ -376,9 +374,9 @@ func (db *DB) GetArticleByID(id int64) (*models.Article, error) {
 	row := db.QueryRow(query, id)
 
 	var a models.Article
-	var imageURL, audioURL, videoURL, translatedTitle, summary, freshrssItemID, author sql.NullString
+	var imageURL, audioURL, videoURL, translatedTitle, summary, freshrssItemID, author, originalSummary sql.NullString
 	var publishedAt sql.NullTime
-	if err := row.Scan(&a.ID, &a.FeedID, &a.Title, &a.URL, &imageURL, &audioURL, &videoURL, &publishedAt, &a.IsRead, &a.IsFavorite, &a.IsHidden, &a.IsReadLater, &translatedTitle, &summary, &freshrssItemID, &a.FeedTitle, &author); err != nil {
+	if err := row.Scan(&a.ID, &a.FeedID, &a.Title, &a.URL, &imageURL, &audioURL, &videoURL, &publishedAt, &a.IsRead, &a.IsFavorite, &a.IsHidden, &a.IsReadLater, &translatedTitle, &summary, &freshrssItemID, &a.FeedTitle, &author, &originalSummary); err != nil {
 		return nil, err
 	}
 	a.ImageURL = imageURL.String
@@ -393,6 +391,7 @@ func (db *DB) GetArticleByID(id int64) (*models.Article, error) {
 	a.Summary = summary.String
 	a.FreshRSSItemID = freshrssItemID.String
 	a.Author = author.String
+	a.OriginalSummary = originalSummary.String
 	return &a, nil
 }
 

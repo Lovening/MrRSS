@@ -6,6 +6,7 @@ import (
 	"log"
 	"net/http"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -159,13 +160,27 @@ func (f *Fetcher) getConcurrencyLimit() int {
 	return concurrency
 }
 
+// globalProxyURL builds the configured global proxy URL from settings.
+func (f *Fetcher) globalProxyURL() string {
+	proxyEnabled, _ := f.db.GetSetting("proxy_enabled")
+	if proxyEnabled != "true" {
+		return ""
+	}
+	proxyType, _ := f.db.GetSetting("proxy_type")
+	proxyHost, _ := f.db.GetSetting("proxy_host")
+	proxyPort, _ := f.db.GetSetting("proxy_port")
+	proxyUsername, _ := f.db.GetEncryptedSetting("proxy_username")
+	proxyPassword, _ := f.db.GetEncryptedSetting("proxy_password")
+	return httputil.BuildProxyURL(proxyType, proxyHost, proxyPort, proxyUsername, proxyPassword)
+}
+
 // getHTTPClient returns an HTTP client configured with proxy if needed
 // Proxy precedence (highest to lowest):
 // 1. Feed custom proxy (ProxyEnabled=true, ProxyURL != "")
 // 2. Global proxy (global proxy_enabled=true)
 // 3. No proxy (no custom proxy and global proxy disabled)
 func (f *Fetcher) getHTTPClient(feed models.Feed) (*http.Client, error) {
-	proxyURL := httputil.BuildGlobalProxyURL(f.db)
+	proxyURL := f.globalProxyURL()
 
 	// Feed-specific custom proxy has the highest priority.
 	if feed.ProxyEnabled && feed.ProxyURL != "" {
@@ -174,11 +189,43 @@ func (f *Fetcher) getHTTPClient(feed models.Feed) (*http.Client, error) {
 
 	// Create HTTP client with browser-like headers to bypass Cloudflare and anti-bot protections
 	// This is critical for RSSHub feeds and other services with anti-bot protection
-	return httputil.CreateHTTPClientWithUserAgent(
+	client, err := httputil.CreateHTTPClientWithUserAgent(
 		proxyURL,
-		30*time.Second,
+		max(60*time.Second, f.retryTimeout()),
 		browserUserAgent,
 	)
+	if err != nil {
+		return nil, err
+	}
+	if feed.ID > 0 {
+		options, err := f.db.GetFeedContentOptions(context.Background(), feed.ID)
+		if err != nil {
+			return nil, err
+		}
+		if options.Cookie != nil {
+			client = httputil.WithScopedCookie(client, options.CookieOrigin, *options.Cookie)
+		}
+	}
+	return client, nil
+}
+
+// retryTimeout is shared by the task deadline and HTTP client. A shorter fixed
+// HTTP timeout would otherwise defeat the user's longer retry budget, including
+// while downloading the body of a large feed.
+func (f *Fetcher) retryTimeout() time.Duration {
+	if f.db == nil {
+		return 60 * time.Second
+	}
+	value, err := f.db.GetSetting("retry_timeout_seconds")
+	if err != nil {
+		return 60 * time.Second
+	}
+	seconds, err := strconv.ParseInt(strings.TrimSpace(value), 10, 64)
+	const maxSeconds = int64((1<<63 - 1) / time.Second)
+	if err != nil || seconds <= 0 || seconds > maxSeconds {
+		return 60 * time.Second
+	}
+	return time.Duration(seconds) * time.Second
 }
 
 func (f *Fetcher) newParserForFeed(feed models.Feed) (*gofeed.Parser, error) {

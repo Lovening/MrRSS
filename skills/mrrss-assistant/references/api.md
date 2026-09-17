@@ -6,7 +6,7 @@ Generated from `docs/SERVER_MODE/swagger.json`. Regenerate with:
 python skills/mrrss-assistant/scripts/generate_api_reference.py docs/SERVER_MODE/swagger.json skills/mrrss-assistant/references/api.md
 ```
 
-- API version: `1.3.28`
+- API version: `1.3.35`
 - API root: `{base_url}/api`
 - Endpoint paths below are relative to the API root unless they already start with `/api/`.
 
@@ -15,9 +15,20 @@ python skills/mrrss-assistant/scripts/generate_api_reference.py docs/SERVER_MODE
 - Use `GET` endpoints freely for inspection.
 - Ask before `DELETE`, bulk updates, cache clearing, or settings changes.
 - Send JSON request bodies with `Content-Type: application/json` unless an endpoint describes file upload.
+- For cancellable chat, first create a session with `POST /api/ai/chat/session/create` and use the returned `id` as `session_id` in `POST /api/ai-chat`, together with a fresh `request_id` (at most 128 bytes; a UUID is recommended).
+- Stop that generation with `POST /api/ai-chat/cancel` and the same `session_id` and `request_id`. Cancellation is idempotent, including before generation starts or after it finishes. Use a new request ID for the next message; cancelled or completed IDs are retained briefly to reject delayed replays.
 - Redact credentials and API keys from user-facing output.
 
 ## Ai
+
+### `POST /ai/chat/session/create`
+
+Create chat session
+
+Parameters:
+  - `request` (body, required): Session creation request (article_id, title)
+
+Request body: see the Swagger schema for full field details.
 
 ### `GET /ai/profiles`
 
@@ -82,6 +93,24 @@ Test AI profile
 
 Parameters:
   - `id` (path, required): Profile ID
+
+### `POST /ai/reading-report`
+
+Generate AI reading report
+
+Parameters:
+  - `request` (body, required): Selected articles, optional profile and focus
+
+Request body: see the Swagger schema for full field details.
+
+### `POST /ai/reading-report/preview`
+
+Preview reading report sources
+
+Parameters:
+  - `request` (body, required): Selected article IDs
+
+Request body: see the Swagger schema for full field details.
 
 ### `POST /ai/search`
 
@@ -266,15 +295,6 @@ Get unread counts
 
 ## Chat
 
-### `POST /chat`
-
-AI chat with article
-
-Parameters:
-  - `request` (body, required): Chat request (messages, article info)
-
-Request body: see the Swagger schema for full field details.
-
 ### `DELETE /chat/message`
 
 Delete chat message
@@ -319,15 +339,6 @@ List chat sessions
 
 Parameters:
   - `article_id` (query, required): Article ID
-
-### `POST /chat/sessions`
-
-Create chat session
-
-Parameters:
-  - `request` (body, required): Session creation request (article_id, title)
-
-Request body: see the Swagger schema for full field details.
 
 ### `DELETE /chat/sessions/all`
 
@@ -389,6 +400,32 @@ Add a new feed
 
 Parameters:
   - `request` (body, required): Feed details
+
+Request body: see the Swagger schema for full field details.
+
+### `POST /feeds/category`
+
+Dissolve a category or unsubscribe its feeds
+
+Parameters:
+  - `request` (body, required): category and action (dissolve or unsubscribe)
+
+Request body: see the Swagger schema for full field details.
+
+### `GET /feeds/content-options`
+
+Feed content extraction settings
+
+Parameters:
+  - `id` (query, required): Feed ID
+
+### `POST /feeds/content-options`
+
+Feed content extraction settings
+
+Parameters:
+  - `id` (query, required): Feed ID
+  - `options` (body, required):
 
 Request body: see the Swagger schema for full field details.
 
@@ -568,6 +605,26 @@ Parameters:
 
 Request body: see the Swagger schema for full field details.
 
+## Ai Chat
+
+### `POST /ai-chat`
+
+AI chat with article
+
+Parameters:
+  - `request` (body, required): Chat request (messages, article info)
+
+Request body: see the Swagger schema for full field details.
+
+### `POST /ai-chat/cancel`
+
+Stop AI chat generation
+
+Parameters:
+  - `request` (body, required): Request to cancel
+
+Request body: see the Swagger schema for full field details.
+
 ## Browser
 
 ### `GET /browser/open`
@@ -609,6 +666,24 @@ Upload custom CSS file
 
 Parameters:
   - `file` (formData, required): CSS file to upload
+
+## Download Update
+
+### `POST /download-update`
+
+Download update
+
+Parameters:
+  - `request` (body, required): Download request (download_url, asset_name, optional request_id)
+
+Request body: see the Swagger schema for full field details.
+
+### `GET /download-update/progress`
+
+Get update download progress
+
+Parameters:
+  - `request_id` (query, required): Download request ID
 
 ## Email
 
@@ -666,6 +741,23 @@ Proxy webpage content
 
 Parameters:
   - `url` (query, required): Webpage URL to proxy
+
+## Miniflux
+
+### `GET /miniflux/status`
+
+Get Miniflux sync status
+
+### `POST /miniflux/sync`
+
+Sync with Miniflux
+
+### `POST /miniflux/sync-feed`
+
+Sync single Miniflux feed
+
+Parameters:
+  - `stream_id` (query, required): Miniflux stream ID
 
 ## Network
 
@@ -808,15 +900,6 @@ Clear all translations
 ### `GET /update/check`
 
 Check for updates
-
-### `POST /update/download`
-
-Download update
-
-Parameters:
-  - `request` (body, required): Download request (download_url, asset_name)
-
-Request body: see the Swagger schema for full field details.
 
 ### `POST /update/install`
 

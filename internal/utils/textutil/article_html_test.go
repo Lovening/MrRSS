@@ -1,0 +1,76 @@
+package textutil
+
+import (
+	"strings"
+	"testing"
+)
+
+func TestArticleMarkdownAndCodeFormatting(t *testing.T) {
+	got := PrepareArticleContent("# Heading\n\n| A | B |\n|---|---|\n|1|2|\n\n```go\nfmt.Println(1)\n```", "https://example.org/article")
+	for _, want := range []string{"<h1", "<table>", `class="language-go"`, "fmt.Println(1)"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("missing %q: %s", want, got)
+		}
+	}
+	example := PrepareArticleContent("<pre><code># Do not reinterpret this example</code></pre>", "https://example.org")
+	if strings.Contains(example, "<h1") {
+		t.Fatal(example)
+	}
+}
+func TestArticleHTMLRemovesActiveContentAndResolvesLinks(t *testing.T) {
+	got := PrepareArticleContent(`<p style="display:none" onclick=evil()>Text</p><img src="../photo.jpg" onerror=evil()><a href="java&#x73;cript:alert(1)">Bad</a><script>
+evil()
+</script><iframe src="https://evil.example"></iframe>`, "https://example.org/news/post")
+	for _, bad := range []string{"onclick", "onerror", "javascript:", "<script", "<iframe", "style="} {
+		if strings.Contains(got, bad) {
+			t.Errorf("unsafe %s in %s", bad, got)
+		}
+	}
+	if !strings.Contains(got, "https://example.org/photo.jpg") {
+		t.Fatal(got)
+	}
+}
+
+func TestArticleHTMLPreservesInlineRasterAndMath(t *testing.T) {
+	content := `<img src="data:image/png;base64,aGVsbG8="><img data-src="/lazy.jpg"><math><mi>x</mi><mo>+</mo><mn>1</mn></math>`
+	got := PrepareArticleContent(content, "https://example.org/article")
+	for _, want := range []string{"data:image/png;base64,aGVsbG8=", "https://example.org/lazy.jpg", "<math>", "<mi>x</mi>"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("missing %s: %s", want, got)
+		}
+	}
+}
+
+func TestArticleHTMLPreservesImageNoReferrer(t *testing.T) {
+	for _, policy := range []string{"no-referrer", "NO-REFERRER", " no-referrer "} {
+		got := PrepareArticleContent(`<img data-src="/photo.jpg" referrerpolicy="`+policy+`" onerror="alert(1)">`, "https://example.org/article")
+		if !strings.Contains(got, `referrerpolicy="no-referrer"`) || !strings.Contains(got, `src="https://example.org/photo.jpg"`) || strings.Contains(got, "onerror") {
+			t.Errorf("unexpected sanitized image: %s", got)
+		}
+	}
+	for _, content := range []string{
+		`<a href="/link" referrerpolicy="no-referrer">link</a>`,
+	} {
+		if got := PrepareArticleContent(content, "https://example.org"); strings.Contains(got, "referrerpolicy") {
+			t.Errorf("unexpected policy retained: %s", got)
+		}
+	}
+}
+
+func TestArticleImagesDefaultToNoReferrer(t *testing.T) {
+	for _, content := range []string{
+		`<img src="http://img.example/get?src=http://mmbiz.qpic.cn/photo">`,
+		`<img src="/photo.jpg" referrerpolicy="unsafe-url">`,
+		`<img data-src="//img.example/photo" referrerpolicy="invalid">`,
+		`![photo](https://img.example/photo)`,
+	} {
+		// A heading makes the final case an unambiguous Markdown source.
+		if strings.HasPrefix(content, "![") {
+			content = "# Article\n\n" + content
+		}
+		got := PrepareArticleContent(content, "https://example.org/article")
+		if strings.Count(got, `referrerpolicy="no-referrer"`) != 1 || strings.Contains(got, "unsafe-url") {
+			t.Errorf("image must use no-referrer: %s", got)
+		}
+	}
+}
