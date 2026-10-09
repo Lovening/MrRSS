@@ -58,6 +58,7 @@ type Defaults struct {
 	CustomTranslationName         string `json:"custom_translation_name"`
 	CustomTranslationResponsePath string `json:"custom_translation_response_path"`
 	CustomTranslationTimeout      int    `json:"custom_translation_timeout"`
+	DataDirectory                 string `json:"data_directory"`
 	DateFormat                    string `json:"date_format"`
 	DeeplAPIKey                   string `json:"deepl_api_key"`
 	DeeplEndpoint                 string `json:"deepl_endpoint"`
@@ -135,6 +136,7 @@ type Defaults struct {
 	SiyuanEndpoint                string `json:"siyuan_endpoint"`
 	SiyuanFolder                  string `json:"siyuan_folder"`
 	SiyuanNotebookId              string `json:"siyuan_notebook_id"`
+	StartupMinimized              bool   `json:"startup_minimized"`
 	StartupOnBoot                 bool   `json:"startup_on_boot"`
 	SummaryEnabled                bool   `json:"summary_enabled"`
 	SummaryLength                 string `json:"summary_length"`
@@ -260,6 +262,8 @@ func GetString(key string) string {
 		return defaults.CustomTranslationResponsePath
 	case "custom_translation_timeout":
 		return strconv.Itoa(defaults.CustomTranslationTimeout)
+	case "data_directory":
+		return defaults.DataDirectory
 	case "date_format":
 		return defaults.DateFormat
 	case "deepl_api_key":
@@ -414,6 +418,8 @@ func GetString(key string) string {
 		return defaults.SiyuanFolder
 	case "siyuan_notebook_id":
 		return defaults.SiyuanNotebookId
+	case "startup_minimized":
+		return strconv.FormatBool(defaults.StartupMinimized)
 	case "startup_on_boot":
 		return strconv.FormatBool(defaults.StartupOnBoot)
 	case "summary_enabled":

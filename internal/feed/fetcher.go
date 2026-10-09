@@ -40,6 +40,7 @@ type Fetcher struct {
 	refreshCalculator *IntelligentRefreshCalculator
 	taskManager       *TaskManager
 	cleanupManager    *CleanupManager
+	browserGate       *browserGate
 }
 
 func NewFetcher(db *database.DB) *Fetcher {
@@ -78,6 +79,7 @@ func NewFetcher(db *database.DB) *Fetcher {
 		scriptExecutor:    executor,
 		emailFetcher:      NewEmailFetcher(db),
 		refreshCalculator: NewIntelligentRefreshCalculator(db),
+		browserGate:       newBrowserGate(maxConcurrentBrowserParses),
 	}
 
 	// Initialize task manager with default capacity (increased from 5 to 10)
@@ -162,6 +164,9 @@ func (f *Fetcher) getConcurrencyLimit() int {
 
 // globalProxyURL builds the configured global proxy URL from settings.
 func (f *Fetcher) globalProxyURL() string {
+	if f.db == nil {
+		return ""
+	}
 	proxyEnabled, _ := f.db.GetSetting("proxy_enabled")
 	if proxyEnabled != "true" {
 		return ""

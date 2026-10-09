@@ -9,10 +9,12 @@ import ArticleBody from './parts/ArticleBody.vue';
 import FloatingToc from './parts/FloatingToc.vue';
 import AudioPlayer from './parts/AudioPlayer.vue';
 import VideoPlayer from './parts/VideoPlayer.vue';
+import TranslationQueueStatus from './parts/TranslationQueueStatus.vue';
 import ArticleChatButton from './ArticleChatButton.vue';
 import ArticleChatPanel from './ArticleChatPanel.vue';
 import { useArticleSummary } from '@/composables/article/useArticleSummary';
 import { useArticleTranslation } from '@/composables/article/useArticleTranslation';
+import { requestTranslation, notifyTranslationError } from '@/utils/translationRequest';
 import { useArticleRendering } from '@/composables/article/useArticleRendering';
 import {
   extractTextWithPlaceholders,
@@ -22,9 +24,11 @@ import {
 import { useSettings } from '@/composables/core/useSettings';
 import { useAppStore } from '@/stores/app';
 import { openInBrowser } from '@/utils/browser';
+import { withLazyImages } from '@/utils/lazyImages';
 import { wrapOrphanedTextNodes } from '@/utils/translationParagraphs';
 import { useArticleSelectionMenu } from '@/composables/article/useArticleSelectionMenu';
 import { useFullArticle } from '@/composables/article/useFullArticle';
+import { useArticleSwipe } from '@/composables/article/useArticleSwipe';
 import './ArticleContent.css';
 
 interface SummaryResult {
@@ -43,6 +47,7 @@ interface TranslationResult {
   text: string;
   html: string;
   failed: boolean;
+  alreadyTarget?: boolean;
 }
 
 interface Props {
@@ -62,6 +67,8 @@ const props = withDefaults(defineProps<Props>(), {
 
 const emit = defineEmits<{
   retryLoadContent: [];
+  previous: [];
+  next: [];
 }>();
 
 const { t } = useI18n();
@@ -75,6 +82,12 @@ function handleRetryLoad() {
 const { settings: appSettings, fetchSettings } = useSettings();
 const store = useAppStore();
 const isChatPanelOpen = ref(false);
+const swipe = useArticleSwipe({
+  articleId: () => props.article.id,
+  enabled: () => props.showContent && !props.isLoadingContent && !isChatPanelOpen.value,
+  previous: () => emit('previous'),
+  next: () => emit('next'),
+});
 const articleScrollContainer = ref<HTMLElement | null>(null);
 const readingProgress = ref(0);
 const showBackToTop = ref(false);
@@ -161,8 +174,10 @@ const showFullTextButton = computed(() => {
 });
 
 // Computed for the content to display (full article if available, otherwise RSS content)
+// Images get native lazy-loading hints so offscreen article images are not
+// fetched and decoded until they approach the viewport.
 const displayContent = computed(() => {
-  return fullArticleContent.value || props.articleContent;
+  return withLazyImages(fullArticleContent.value || props.articleContent);
 });
 
 // Use composables for summary and translation
@@ -320,7 +335,6 @@ async function loadSettings() {
 async function translateText(
   text: string,
   force: boolean = false,
-  updateTranslationStatus: boolean = true,
   requestIsCurrent: () => boolean = () => true
 ): Promise<TranslationResult> {
   if (!text || !translationEnabled.value) {
@@ -334,36 +348,30 @@ async function translateText(
   };
 
   try {
-    const res = await fetch('/api/articles/translate-text', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(requestBody),
-    });
+    const res = await requestTranslation(
+      '/api/articles/translate-text',
+      requestBody,
+      requestIsCurrent
+    );
 
+    if (!requestIsCurrent() || res.status === 204) return { text: '', html: '', failed: false };
     if (res.ok) {
       const data = await res.json();
       if (!requestIsCurrent()) return { text: '', html: '', failed: false };
-
-      // Check if translation was skipped
-      if (updateTranslationStatus && (data.skipped === 'true' || data.skipped === true)) {
-        if (data.reason === 'already_target_language') {
-          translationSkipped.value = true;
-        }
-      } else if (updateTranslationStatus) {
-        // Reset skip flags on successful translation
-        translationSkipped.value = false;
-      }
 
       return {
         text: data.translated_text || '',
         html: data.html || '',
         failed: false,
+        alreadyTarget:
+          (data.skipped === 'true' || data.skipped === true) &&
+          data.reason === 'already_target_language',
       };
     } else {
-      if (requestIsCurrent()) window.showToast(t('common.errors.translatingContent'), 'error');
+      if (requestIsCurrent()) notifyTranslationError(t('common.errors.translatingContent'));
     }
   } catch {
-    if (requestIsCurrent()) window.showToast(t('common.errors.translating'), 'error');
+    if (requestIsCurrent()) notifyTranslationError(t('common.errors.translating'));
   }
   return { text: '', html: '', failed: true };
 }
@@ -390,10 +398,15 @@ async function translateSummary(result: SummaryResult | null) {
   }
 
   const requestId = summaryTranslationRequestId;
+  const articleId = props.article.id;
+  const requestIsCurrent = () =>
+    requestId === summaryTranslationRequestId &&
+    props.article.id === articleId &&
+    translationEnabled.value;
   isTranslatingSummary.value = true;
-  const translation = await translateText(result.summary, false, false);
+  const translation = await translateText(result.summary, false, requestIsCurrent);
 
-  if (requestId !== summaryTranslationRequestId) {
+  if (!requestIsCurrent()) {
     return;
   }
 
@@ -429,6 +442,16 @@ const { fullArticleContent, isFetchingFullArticle, fetchFullArticle } = useFullA
   },
 });
 
+async function enterReadingMode() {
+  if (!appSettings.value.full_text_fetch_enabled) {
+    window.showToast(t('article.action.readingModeRssOnly'), 'info');
+    return;
+  }
+  if (!fullArticleContent.value) await fetchFullArticle();
+}
+
+defineExpose({ enterReadingMode, isFetchingFullArticle });
+
 // Generate summary for the current article
 async function generateSummary(article: Article, force: boolean = false) {
   if (!summaryEnabled.value || !article) {
@@ -449,7 +472,7 @@ async function generateSummary(article: Article, force: boolean = false) {
 
   // Set summary result
   summaryResult.value = result;
-  await translateSummary(result);
+  void translateSummary(result);
 }
 
 // Check if should auto-generate summary
@@ -492,7 +515,7 @@ async function translateTitle(article: Article, force = false) {
     props.article?.id === article.id &&
     translationEnabled.value;
   isTranslatingTitle.value = true;
-  const translation = await translateText(article.title, force, false, requestIsCurrent);
+  const translation = await translateText(article.title, force, requestIsCurrent);
   if (!requestIsCurrent()) return;
   translatedTitle.value = translation.text;
   isTranslatingTitle.value = false;
@@ -541,6 +564,7 @@ async function translateContentParagraphs(
   }
 
   isTranslatingContent.value = true;
+  translationSkipped.value = false;
   const articleID = props.article?.id || null;
   const requestID = ++contentTranslationRequestId;
   const requestIsCurrent = () =>
@@ -607,6 +631,8 @@ async function translateContentParagraphs(
   // Track which elements we've already translated to avoid duplicates
   const translatedElements = new Set<HTMLElement>();
   let translationFailed = false;
+  let checkedParagraphs = 0;
+  let alreadyTargetParagraphs = 0;
 
   // Process elements level by level to handle nested structures correctly
   // First, get all elements and sort them by depth (shallowest first)
@@ -702,8 +728,10 @@ async function translateContentParagraphs(
     if (!textWithPlaceholders || textWithPlaceholders.length < 2) continue;
 
     // Translate the text (with placeholders and link markers)
-    const translation = await translateText(textWithPlaceholders, force, true, requestIsCurrent);
+    const translation = await translateText(textWithPlaceholders, force, requestIsCurrent);
     if (!requestIsCurrent()) return false;
+    checkedParagraphs++;
+    if (translation.alreadyTarget) alreadyTargetParagraphs++;
     if (translation.failed) {
       translationFailed = true;
       continue;
@@ -716,7 +744,9 @@ async function translateContentParagraphs(
     }
 
     // Restore preserved elements and hyperlinks in the translated text
-    const translatedHTML = restorePreservedElements(translatedText, preservedElements, hyperlinks);
+    const translatedHTML = withLazyImages(
+      restorePreservedElements(translatedText, preservedElements, hyperlinks)
+    );
 
     // Determine how to insert translation based on element type
     const tagName = htmlEl.tagName;
@@ -772,6 +802,12 @@ async function translateContentParagraphs(
   await reattachContentInteractions();
 
   isTranslatingContent.value = false;
+  // A mixed-language article must not be labelled skipped because its last paragraph is Chinese.
+  translationSkipped.value =
+    !paragraph &&
+    !translationFailed &&
+    checkedParagraphs > 0 &&
+    alreadyTargetParagraphs === checkedParagraphs;
   if (translationFailed) {
     lastTranslatedArticleId.value = null;
     lastTranslatedContentHash.value = '';
@@ -915,6 +951,7 @@ async function onSummarySettingsChanged(): Promise<void> {
 
 // Re-translate the RSS summary when translation settings or the target language change.
 async function onTranslationSettingsChanged(): Promise<void> {
+  translationSkipped.value = false;
   titleTranslationRequestId += 1;
   isTranslatingTitle.value = false;
   contentTranslationRequestId += 1;
@@ -927,7 +964,7 @@ async function onTranslationSettingsChanged(): Promise<void> {
   if (translationEnabled.value) {
     translateTitle(props.article);
     if (summaryResult.value) {
-      await translateSummary(summaryResult.value);
+      void translateSummary(summaryResult.value);
     }
     if (displayContent.value) {
       lastTranslatedArticleId.value = null;
@@ -955,7 +992,9 @@ watch(
       }
       readingProgress.value = 0;
       showBackToTop.value = false;
-      pendingScrollRestoreArticleId = appSettings.value.remember_article_position ? (newId ?? null) : null;
+      pendingScrollRestoreArticleId = appSettings.value.remember_article_position
+        ? (newId ?? null)
+        : null;
       pendingScrollRestoreAttempts = 0;
 
       // Cancel any ongoing summary generation for the previous article
@@ -966,6 +1005,7 @@ watch(
       summaryResult.value = null;
       clearTranslatedSummary();
       translatedTitle.value = '';
+      translationSkipped.value = false;
       titleTranslationRequestId += 1;
       isTranslatingTitle.value = false;
       contentTranslationRequestId += 1;
@@ -983,7 +1023,7 @@ watch(
           // Set summary result
           if (result) {
             summaryResult.value = result;
-            await translateSummary(result);
+            void translateSummary(result);
           }
         } else if (shouldAutoGenerateSummary()) {
           // Only auto-generate if no cached summary exists
@@ -1086,7 +1126,7 @@ onMounted(async () => {
       // Set summary result
       if (result) {
         summaryResult.value = result;
-        await translateSummary(result);
+        void translateSummary(result);
       }
     } else if (shouldAutoGenerateSummary() && props.articleContent) {
       // Only auto-generate if no cached summary exists
@@ -1143,6 +1183,7 @@ watch(fullArticleContent, async (content) => {
 
 // Clean up event listeners
 onBeforeUnmount(() => {
+  clearTranslatedSummary();
   titleTranslationRequestId += 1;
   isTranslatingTitle.value = false;
   contentTranslationRequestId += 1;
@@ -1192,6 +1233,11 @@ onBeforeUnmount(() => {
       @click="handleContainerClick"
       @contextmenu="onTextContextMenu"
       @scroll="handleArticleScroll"
+      @touchstart.passive="swipe.touchstart"
+      @touchmove="swipe.touchmove"
+      @touchend="swipe.touchend"
+      @touchcancel="swipe.touchcancel"
+      @wheel="swipe.wheel"
     >
       <div
         class="max-w-3xl mx-auto bg-bg-primary [container-type:inline-size]"
@@ -1211,6 +1257,14 @@ onBeforeUnmount(() => {
           :is-translating-content="isTranslatingContent"
           @translate-title="translateTitle(article, true)"
           @force-translate="forceTranslateContent"
+        />
+
+        <TranslationQueueStatus
+          v-if="
+            translationEnabled &&
+            (isTranslatingTitle || isTranslatingContent || isTranslatingSummary)
+          "
+          class="mb-4"
         />
 
         <p v-if="translationEnabled && manualTranslation" class="text-xs text-text-secondary mb-4">

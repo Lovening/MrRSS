@@ -1,9 +1,93 @@
-﻿# Changelog
+# Changelog
 
 All notable changes to MrRSS will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
+
+## [1.3.39] - 2026-10-07
+
+### Added
+
+- Expand or collapse the feed list with a configurable keyboard shortcut (`B` by default), including a shortcut hint on the sidebar button. (#1235)
+- Dismiss an unpinned feed list when clicking or focusing outside it, or when the application loses focus. (#1236)
+- Extract video enclosures and inline video sources, show generic videos in the multimedia gallery, and play them with native video controls while retaining YouTube and Bilibili embeds. (#1244)
+- Allow dragging rendered article images to desktop/file-manager targets using the WebView's image/file download drag support, with safe filenames and the existing media proxy. Availability depends on the platform WebView.
+
+### Fixed
+
+- Avoid reinstalling frontend dependencies during backend development rebuilds, preventing Windows file-lock errors while Vite is running.
+- Keep observing background refreshes and detect article saves between progress polls, updating the selected feed/category, articles, and unread counts without losing the current article. (#1229)
+- Refresh the interface when either Miniflux or FreshRSS finishes synchronization, repair the polling-state reference, and check sync HTTP responses. (#1242) (@HernandoR)
+- Recover empty reader content after feed refresh without restarting; invalidate stale frontend content and retain visible content if a background reload fails.
+- Preserve generated title translations during feed refresh and add regression coverage ensuring AI summaries, cached content, and chat history remain intact.
+- Avoid repeated automatic title translation after list refresh, retain skipped results, retry failed visible titles with backoff, and respect Google translation rate limits across title/content requests with bounded concurrency and localized feedback.
+- Keep rate-limited title, paragraph, and RSS-summary translations queued for automatic retry, prioritize the current article, and cancel obsolete work. Return cached/local reading results immediately during upstream outages, restore normal speed after recovery, and avoid labelling mixed-language articles as skipped.
+- Preserve HTTP 429 retry delays from translation providers and propagate AI/list translation throttling instead of storing partially untranslated results as successful translations.
+- Fail over between the two built-in Google translation endpoints when one returns HTTP 429, using the configured proxy and retaining the preferred endpoint. Keep cooldowns separate and never change hosts for custom endpoints.
+- Resolve responsive `img`/`source` image candidates in the original-page proxy and preserve a valid lead image when full-text extraction contains no images. (#1230, #1231, #1239)
+- Promote valid Discuz `zoomfile`/`file` attachments after existing lazy-image attributes in RSS content, full-text extraction, and original pages; preserve relative URLs, HTML entities, and already-proxied resources. (#1230, #1239)
+- Retry media GET requests rejected with HTTP 403 once without Referer, including redirects, within the same timeout. Never cache failed or incomplete downloads, and avoid duplicate retries after the fallback is exhausted. (#1230, #1239)
+
+### Changed
+
+- Restore the stable article viewport during bulk refresh: update progress and sidebar counts live, then publish new articles once on completion, avoiding repeated automatic translations of transient rows. Keep detecting short background refreshes between polls. (#1229)
+- Reduce refresh CPU and allocations by reusing Chinese conversion dictionaries and image extraction patterns and skipping video parsing for ordinary articles.
+- Update gofeed to 1.5.0 and align Wails, its frontend runtime, and the build CLI on beta.27. (#1232, #1234, #1245, #1246)
+- Refresh the locked Go, frontend, and website dependencies and apply compatible security updates to vulnerable npm transitive dependencies. (#1233, #1234, #1245, #1246, #1247)
+
+## [1.3.38] - 2026-09-27
+
+### Added
+
+- Navigate between articles with horizontal touch or trackpad gestures in the reader and card reading dialog. Preserve vertical scrolling, text selection, controls, and nested horizontal scrolling; limit each trackpad gesture to one article. (#1224)
+- Add a customizable Reading Mode toolbar button that switches from the original webpage to the reader and extracts clean article text using the existing full-text service. Respect the full-text setting, keep feed content on failure, and cancel stale requests when changing articles. (#1225)
+
+### Fixed
+
+- Remember independently resized article-list widths for normal and compact layouts across restarts and layout switches. Validate saved widths and release resize state when the window loses focus. (#1222)
+- Detect Chinese-only and default system fonts more reliably, recognize common Chinese family names, and allow an installed font family name to be entered for both interface and article typography. (#1223)
+- Show localized feedback when opening links in the external browser, including article-summary links, and report blocked browser popups as failures. (@huiinyg-rusting)
+- Allow dragging the entire folder header in sidebar edit mode, and make the article-list footer mark the same complete scope as the toolbar while refreshing unread counts. Preserve unread state when requests fail. (#1228)
+- Reset the article list to the top when changing subscriptions or filters, and prevent upward scrolling or stale observers from marking articles as read. (#1228)
+- Honor saved article-list widths in medium-sized windows, resize from the actual displayed width, and widen scrollbars for easier dragging. (#1228)
+
+## [1.3.37] - 2026-09-21
+
+### Added
+
+- Select articles in normal, card, and table layouts, select all currently visible articles, and batch-mark the selection as read or unread through a bounded API that preserves reader-service synchronization. (#1210)
+- Optionally keep the desktop window hidden in the system tray when the application starts with the operating system, while preserving normal visibility for manual launches. (#1215)
+- Show an unread-state badge on multimedia gallery cards and remove it as soon as the article is marked read. (#1214)
+
+### Changed
+
+- Align the data-directory and chat-response-preference layouts with neighboring settings, present chat-history retention as a nested setting, and use distinct icons for consecutive article-display options.
+- Pin local Wails tasks to the runtime version, install frontend dependencies from the lockfile, and wait for the Vite server before launching the desktop process in development mode.
+
+### Fixed
+
+- Scope card-view image discovery to article content so AI chat icons do not enter the image viewer. (#1212)
+- Close article context menus when clicking modal overlays or other content that stops bubbling events. (#1213)
+- Limit settings search to visible setting labels so hidden modal text, status messages, and placeholders do not produce unreachable results. (#1216)
+
+## [1.3.36] - 2026-09-20
+
+### Added
+
+- Choose a data directory in Settings → General → Data Management. Migrate to an empty folder on the next launch, preserve the original data as a backup, and keep using the original directory if copying fails. Retain command-line/environment overrides for desktop and server deployments. (#673, #1204)
+- Select XPath fields in an isolated preview with original page styles and images, hover highlights, ancestor selection and extracted samples. Start from an article title to suggest a list and infer its links; calibrate the list or any field with a second example, review highlighted matches and field coverage, and retain manual selection. Disable source scripts, forms and navigation. (#1205)
+
+### Changed
+
+- Reduce reader memory use with bounded article/feed caches, an approximately 8 MiB SQLite page cache per connection and two idle connections, at most two concurrent browser parses, streamed media downloads/serving with range and conditional requests, and lazy article images. Cache eight recently opened article bodies while preserving cancellation and invalidation behavior. (#771) (@expoli)
+- Window long ungrouped normal/compact article lists. Keep cards, tables and grouped views fully rendered to preserve grid positions and headers; retain keyboard navigation and release observers for unmounted rows. (#90) (@expoli)
+
+### Fixed
+
+- Atomically replace the installed Linux AppImage instead of launching an update from the temporary download directory. Restart after the old instance exits, retain launch options, bypass close-to-tray during the handoff, and remove the downloaded file and empty directory. Preserve the installed image if staging fails. (#1201)
+- Provide a standard-library Python feed for the government latest-policy page, whose JavaScript-generated article list is absent from static HTML. Document the JSON alternative and correct XPath date configuration. (#1203)
+- Correct the content-cache TTL from nanoseconds to 30 minutes, enforce capacity even when writes share a timestamp, and prevent expired or in-flight entries from undoing cache invalidation. (@expoli)
 
 ## [1.3.35] - 2026-09-16
 
@@ -60,8 +144,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Fetch Miniflux articles through its supported Google Reader item endpoints and preserve folders, read state, and starred state during synchronization. (#1191) (@HernandoR)
 - Preserve image `referrerpolicy="no-referrer"` in article content so feeds can load images from hosts that reject the desktop WebView referrer. (#1189)
 - Apply the configured application proxy and encrypted proxy credentials to media cache downloads and direct media forwarding, and cancel downloads with their requests. (#1189)
-
-## [Unreleased]
 
 ## [1.3.33] - 2026-09-10
 

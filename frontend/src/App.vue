@@ -48,6 +48,8 @@ watchEffect(() => {
 
 onUnmounted(() => {
   store.startAutoRefresh(0);
+  store.stopProgressPolling();
+  store.stopFreshRSSStatusPolling();
   const rootStyle = document.documentElement.style;
   rootStyle.removeProperty('--ui-font-family');
   rootStyle.removeProperty('--ui-font-size');
@@ -88,13 +90,8 @@ const {
 
 const { contextMenu, openContextMenu, handleContextMenuAction } = useContextMenu();
 
-const {
-  sidebarWidth,
-  articleListWidth,
-  startResizeArticleList,
-  setArticleListWidth,
-  setCompactMode,
-} = useResizablePanels();
+const { sidebarWidth, articleListWidth, startResizeArticleList, setCompactMode } =
+  useResizablePanels();
 
 // Use app updates composable
 const {
@@ -138,6 +135,8 @@ onMounted(async () => {
 
   // Initialize theme system immediately (lightweight)
   store.initTheme();
+  store.pollProgress();
+  void store.startFreshRSSStatusPolling();
 
   // Load remaining settings (theme and other settings are already loaded in main.ts)
   let updateInterval = 10;
@@ -154,9 +153,8 @@ onMounted(async () => {
     const isCompactModeLayout = layoutMode === 'compact';
     isCardMode.value = layoutMode === 'card';
     isTableMode.value = layoutMode === 'table';
-    // First set the compact mode, then set the width (order matters)
+    // Restore the user's width for this layout.
     setCompactMode(isCompactModeLayout);
-    setArticleListWidth(isCompactModeLayout ? 500 : 350);
 
     // Notify all components that settings have been loaded
     window.dispatchEvent(new CustomEvent('settings-loaded'));
@@ -292,9 +290,6 @@ window.addEventListener('layout-mode-changed', (e) => {
   isCardMode.value = mode === 'card';
   isTableMode.value = mode === 'table';
   setCompactMode(isCompactModeLayout);
-  if (!isCardMode.value) {
-    setArticleListWidth(isCompactModeLayout ? 600 : 400);
-  }
 });
 
 // Global Context Menu Event Listener
@@ -529,7 +524,10 @@ function onFeedUpdated(): void {
   margin-right: -2px;
 }
 .reader-panes {
-  display: contents;
+  display: flex;
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
 }
 @media (min-width: 768px) {
   .reader-panes.table-mode {

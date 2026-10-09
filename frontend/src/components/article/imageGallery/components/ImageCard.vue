@@ -2,10 +2,12 @@
 import { useArticleDateFormat } from '@/composables/article/useArticleDateFormat';
 import { PhImage, PhStar, PhPlay } from '@phosphor-icons/vue';
 import { computed } from 'vue';
+import { useI18n } from 'vue-i18n';
 import type { Article } from '@/types/models';
 import { getProxiedMediaUrl } from '@/utils/mediaProxy';
 import { isYouTubeArticle, extractYouTubeVideoId, getYouTubeThumbnailUrl } from '@/utils/youtube';
 import { isBilibiliArticle } from '@/utils/bilibili';
+import { isVideoArticle } from '@/utils/video';
 
 interface Props {
   article: Article;
@@ -15,6 +17,7 @@ interface Props {
 }
 
 const props = defineProps<Props>();
+const { t } = useI18n();
 
 const emit = defineEmits<{
   imageSize: [width: number, height: number];
@@ -36,7 +39,7 @@ const isBilibili = computed(() => isBilibiliArticle(props.article));
 /**
  * Check if this article has any video (YouTube or Bilibili)
  */
-const isVideo = computed(() => isYouTube.value || isBilibili.value);
+const isVideo = computed(() => isVideoArticle(props.article));
 
 /**
  * Get platform badge icon path
@@ -120,10 +123,20 @@ const { formatArticleDate: formatDate, formatArticleDateTime } = useArticleDateF
         "
       />
 
+      <div
+        v-if="!article.is_read"
+        class="pointer-events-none absolute left-2 top-2 z-20 flex items-center gap-1.5 rounded-full bg-accent px-2 py-1 text-xs font-semibold text-white shadow-lg"
+        data-testid="gallery-unread-badge"
+      >
+        <span class="h-2 w-2 rounded-full bg-white" aria-hidden="true"></span>
+        <span>{{ t('article.table.unread') }}</span>
+      </div>
+
       <!-- Platform badge (top-left) -->
       <div
         v-if="platformBadge"
-        class="absolute top-2 left-2 px-2 py-1 rounded-md bg-white/90 dark:bg-gray-800/90 text-gray-900 dark:text-white text-xs font-semibold shadow-lg z-10 flex items-center gap-1.5 backdrop-blur-sm pointer-events-auto"
+        class="absolute left-2 px-2 py-1 rounded-md bg-white/90 dark:bg-gray-800/90 text-gray-900 dark:text-white text-xs font-semibold shadow-lg z-10 flex items-center gap-1.5 backdrop-blur-sm pointer-events-auto"
+        :class="article.is_read ? 'top-2' : 'top-11'"
       >
         <img :src="platformBadge.iconPath" class="w-4 h-4" alt="" />
         <span>{{ platformBadge.label }}</span>
@@ -171,7 +184,9 @@ const { formatArticleDate: formatDate, formatArticleDateTime } = useArticleDateF
         </p>
         <div class="flex items-center justify-between text-xs text-white/80">
           <span class="truncate flex-1">{{ article.feed_title }}</span>
-          <span class="ml-2 shrink-0" :title="formatArticleDateTime(article.published_at)">{{ formatDate(article.published_at) }}</span>
+          <span class="ml-2 shrink-0" :title="formatArticleDateTime(article.published_at)">{{
+            formatDate(article.published_at)
+          }}</span>
         </div>
       </div>
     </div>
@@ -183,7 +198,9 @@ const { formatArticleDate: formatDate, formatArticleDateTime } = useArticleDateF
       </p>
       <div class="flex items-center justify-between text-xs text-text-secondary">
         <span class="truncate flex-1">{{ article.feed_title }}</span>
-        <span class="ml-2 shrink-0" :title="formatArticleDateTime(article.published_at)">{{ formatDate(article.published_at) }}</span>
+        <span class="ml-2 shrink-0" :title="formatArticleDateTime(article.published_at)">{{
+          formatDate(article.published_at)
+        }}</span>
       </div>
     </div>
   </div>

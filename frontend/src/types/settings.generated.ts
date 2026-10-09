@@ -45,6 +45,7 @@ export interface SettingsData {
   custom_translation_name: string;
   custom_translation_response_path: string;
   custom_translation_timeout: number;
+  data_directory: string;
   date_format: string;
   deepl_api_key: string;
   deepl_endpoint: string;
@@ -122,6 +123,7 @@ export interface SettingsData {
   siyuan_endpoint: string;
   siyuan_folder: string;
   siyuan_notebook_id: string;
+  startup_minimized: boolean;
   startup_on_boot: boolean;
   summary_enabled: boolean;
   summary_length: string;

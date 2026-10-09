@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { withShortcut } from '@/composables/ui/shortcutBindings';
-import { ref, computed, watch, onMounted, onBeforeUnmount } from 'vue';
+import { ref, computed, watch, onMounted, onBeforeUnmount, nextTick } from 'vue';
 import { useI18n } from 'vue-i18n';
 import { useAppStore } from '@/stores/app';
 import { PhCaretLeft, PhCaretRight } from '@phosphor-icons/vue';
@@ -11,6 +11,7 @@ import FindInPage from '../common/FindInPage.vue';
 import type { Article } from '@/types/models';
 import { openInBrowser } from '@/utils/browser';
 import { useSettings } from '@/composables/core/useSettings';
+import { queryArticleContentImages } from '@/utils/articleContentDom';
 
 interface Props {
   article: Article;
@@ -39,6 +40,14 @@ const { settings, fetchSettings } = useSettings();
 const showContent = ref(true);
 const showTranslations = ref(true);
 const showFindInPage = ref(false);
+const contentView = ref<InstanceType<typeof ArticleContent> | null>(null);
+
+async function enterReadingMode() {
+  const id = props.article.id;
+  showContent.value = true;
+  await nextTick();
+  if (id === props.article.id) await contentView.value?.enterReadingMode();
+}
 
 // Image viewer state
 const imageViewerSrc = ref<string | null>(null);
@@ -266,7 +275,7 @@ function attachImageEventListeners() {
     const contentEl = document.querySelector('.modal-prose-content');
     if (!contentEl) return;
 
-    const images = contentEl.querySelectorAll('img');
+    const images = queryArticleContentImages(contentEl);
     const allImages: string[] = [];
 
     images.forEach((img) => {
@@ -317,6 +326,9 @@ function handleOverlayClick(e: MouseEvent) {
           :show-content="showContent"
           :show-translations="showTranslations"
           :is-modal="true"
+          :is-loading-content="isLoadingContent"
+          :is-reading-mode-loading="contentView?.isFetchingFullArticle ?? false"
+          @reading-mode="enterReadingMode"
           @close="emit('close')"
           @toggle-content-view="toggleContentView"
           @toggle-read="emit('toggleRead')"
@@ -345,6 +357,7 @@ function handleOverlayClick(e: MouseEvent) {
           <!-- RSS content view -->
           <ArticleContent
             v-else
+            ref="contentView"
             :article="article"
             :article-content="articleContent"
             :is-loading-content="isLoadingContent"
@@ -353,6 +366,8 @@ function handleOverlayClick(e: MouseEvent) {
             :show-content="showContent"
             class="modal-prose-content"
             @retry-load-content="handleRetryLoadContent"
+            @previous="hasPreviousArticle && emit('previous')"
+            @next="hasNextArticle && emit('next')"
           />
         </div>
 

@@ -13,9 +13,13 @@ import {
   PhClock,
   PhLightning,
   PhStar,
+  PhCheckSquare,
+  PhSquare,
+  PhX,
 } from '@phosphor-icons/vue';
 import ArticleFilterModal from '../modals/filter/ArticleFilterModal.vue';
 import ArticleListMoreMenu from './ArticleListMoreMenu.vue';
+import TranslationQueueStatus from './parts/TranslationQueueStatus.vue';
 import ReadingReportModal from './ReadingReportModal.vue';
 import {
   articleGroupStarts,
@@ -27,6 +31,7 @@ import ArticleItem from './ArticleItem.vue';
 import ArticleCardItem from './ArticleCardItem.vue';
 import ArticleTableRow from './ArticleTableRow.vue';
 import { parseArticleTableColumns } from '@/utils/articleTable';
+import { loadArticleContent, invalidateArticleContent } from '@/utils/articleContentCache';
 import ArticleDetailModal from './ArticleDetailModal.vue';
 import AISearchBar from './AISearchBar.vue';
 import { useArticleTranslation } from '@/composables/article/useArticleTranslation';
@@ -34,6 +39,8 @@ import { useArticleFilter } from '@/composables/article/useArticleFilter';
 import { useArticleActions } from '@/composables/article/useArticleActions';
 import { useArticleSelectionMenu } from '@/composables/article/useArticleSelectionMenu';
 import { useArticleListTransition } from '@/composables/article/useArticleListTransition';
+import { useArticleListWindow } from '@/composables/article/useArticleListWindow';
+import { useArticleListScrollReset } from '@/composables/article/useArticleListScrollReset';
 import { useShowPreviewImages } from '@/composables/ui/useShowPreviewImages';
 import { useSettings } from '@/composables/core/useSettings';
 import { parseSettingsData } from '@/composables/core/useSettings.generated';
@@ -54,6 +61,10 @@ const savedScrollTop = ref(0);
 const showRefreshTooltip = ref(false);
 // Track articles that should be temporarily kept in list even if read
 const temporarilyKeepArticles = ref<Set<number>>(new Set());
+const selectionMode = ref(false);
+const selectedArticleIds = ref<Set<number>>(new Set());
+const isApplyingSelection = ref(false);
+const isMarkingAllRead = ref(false);
 // Flag to control when scroll position should be restored
 const shouldRestoreScroll = ref(false);
 const pendingFeedArticleId = ref<number | null>(null);
@@ -61,6 +72,7 @@ const scrollReadElements = new Map<number, Element>();
 const scrollReadSeen = new Set<number>();
 const scrollReadPending = new Set<number>();
 let scrollReadObserver: IntersectionObserver | null = null;
+let scrollReadGeneration = 0;
 
 // Card mode modal state
 const showCardModal = ref(false);
@@ -83,6 +95,7 @@ async function scrollPendingFeedArticleIntoView(): Promise<void> {
   const articleId = pendingFeedArticleId.value;
   if (!articleId || !listRef.value) return;
 
+  await ensureArticleVisible(articleId);
   await nextTick();
   const articleElement = listRef.value.querySelector<HTMLElement>(
     `[data-article-id="${articleId}"]`
@@ -114,6 +127,7 @@ const {
   loadTranslationSettings,
   setupIntersectionObserver,
   observeArticle,
+  unobserveArticle,
   handleTranslationSettingsChange,
   cleanup: cleanupTranslation,
 } = useArticleTranslation();
@@ -256,14 +270,13 @@ const { showArticleContextMenu } = useArticleActions(
 const { onContextMenu: showSelectionContextMenu } = useArticleSelectionMenu(listRef);
 
 function handleArticleContextMenu(event: MouseEvent, article: Article): void {
-  if (showingPrevious.value) {
+  if (showingPrevious.value || selectionMode.value) {
     event.preventDefault();
     return;
   }
   showSelectionContextMenu(event);
   if (!event.defaultPrevented) showArticleContextMenu(event, article);
 }
-
 async function preserveRelativeReadPosition(
   referenceArticle: Article,
   direction: 'above' | 'below'
@@ -301,12 +314,135 @@ async function preserveRelativeReadPosition(
 const visibleArticles = computed(() =>
   orderGroupedArticles(filteredArticles.value, store.articleGroupBy, store.articleSortOrder)
 );
+const selectedArticleCount = computed(() => selectedArticleIds.value.size);
+const allVisibleArticlesSelected = computed(
+  () =>
+    visibleArticles.value.length > 0 &&
+    visibleArticles.value.every((article) => selectedArticleIds.value.has(article.id))
+);
+
+function enterSelectionMode(): void {
+  selectionMode.value = true;
+}
+
+function exitSelectionMode(): void {
+  selectionMode.value = false;
+  selectedArticleIds.value = new Set();
+}
+
+function toggleArticleSelection(articleId: number): void {
+  const next = new Set(selectedArticleIds.value);
+  if (next.has(articleId)) next.delete(articleId);
+  else next.add(articleId);
+  selectedArticleIds.value = next;
+}
+
+function toggleAllVisibleArticles(): void {
+  const visibleIds = visibleArticles.value.map((article) => article.id);
+  const next = new Set(selectedArticleIds.value);
+  if (allVisibleArticlesSelected.value) visibleIds.forEach((id) => next.delete(id));
+  else visibleIds.forEach((id) => next.add(id));
+  selectedArticleIds.value = next;
+}
+
+function updateSelectedReadState(ids: Set<number>, read: boolean): void {
+  for (const articles of [
+    store.articles,
+    filteredArticlesFromServer.value,
+    aiSearchResults.value,
+  ]) {
+    articles.forEach((article) => {
+      if (ids.has(article.id)) article.is_read = read;
+    });
+  }
+}
+
+async function applySelectedReadState(read: boolean): Promise<void> {
+  if (selectedArticleIds.value.size === 0 || isApplyingSelection.value) return;
+
+  const ids = [...selectedArticleIds.value];
+  isApplyingSelection.value = true;
+  try {
+    const result = await fetch('/api/articles/read-batch', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ ids, read }),
+    });
+    if (!result.ok) throw new Error(`HTTP ${result.status}`);
+
+    updateSelectedReadState(new Set(ids), read);
+    exitSelectionMode();
+    await Promise.allSettled([store.fetchUnreadCounts(), store.fetchFilterCounts()]);
+    window.showToast(
+      t(read ? 'article.action.markedSelectedAsRead' : 'article.action.markedSelectedAsUnread', {
+        count: ids.length,
+      }),
+      'success'
+    );
+  } catch (error) {
+    console.error('Error updating selected articles:', error);
+    window.showToast(t('article.action.batchReadUpdateFailed'), 'error');
+  } finally {
+    isApplyingSelection.value = false;
+  }
+}
 const { displayedArticles, showingPrevious, showLoadingIndicator } = useArticleListTransition(
   visibleArticles,
   computed(() => store.isLoading)
 );
+// Keeps only the rows around the viewport mounted: rendering every loaded
+// article costs roughly 0.5 MB per row in the web view (measured).
+const {
+  windowItems,
+  topSpacerHeight,
+  bottomSpacerHeight,
+  updateFromScroll: updateListWindow,
+  ensureArticleVisible,
+  resetWindow: resetArticleListWindow,
+} = useArticleListWindow(displayedArticles, listRef, {
+  // Grid row boundaries and grouped/table headers need layout-specific
+  // virtualization. Preserve those layouts until that support is available.
+  enabled: computed(
+    () => !isCardMode.value && !isTableMode.value && store.articleGroupBy === 'none'
+  ),
+  layoutKey: layoutMode,
+});
 const groupStarts = computed(() =>
   articleGroupStarts(displayedArticles.value, store.articleGroupBy)
+);
+
+const resettingListScroll = useArticleListScrollReset(
+  computed(() =>
+    JSON.stringify([
+      store.currentFeedId,
+      store.currentCategory,
+      store.currentFilter,
+      store.searchQuery,
+      store.showOnlyUnread,
+      activeFilters.value,
+      isAISearchActive.value,
+    ])
+  ),
+  computed(() => store.isLoading || isFilterLoading.value),
+  () => {
+    shouldRestoreScroll.value = false;
+    savedScrollTop.value = 0;
+    hasScrolledToBottom.value = false;
+    if (scrollThrottleTimer) clearTimeout(scrollThrottleTimer);
+    scrollThrottleTimer = null;
+    if (listRef.value) listRef.value.scrollTop = 0;
+    resetArticleListWindow();
+  },
+  () => {
+    scrollReadGeneration++;
+    scrollReadObserver?.disconnect();
+    scrollReadSeen.clear();
+    temporarilyKeepArticles.value.clear();
+  },
+  () => {
+    setupScrollReadObserver();
+    if (pendingFeedArticleId.value) void scrollPendingFeedArticleIntoView();
+  }
 );
 
 function groupLabel(article: Article): string {
@@ -322,6 +458,10 @@ async function markArticleAfterScroll(articleId: number): Promise<void> {
   const article = filteredArticles.value.find((item) => item.id === articleId);
   if (
     !settings.value.scroll_mark_as_read ||
+    resettingListScroll.value ||
+    showingPrevious.value ||
+    store.isLoading ||
+    isFilterLoading.value ||
     !article ||
     article.is_read ||
     article.is_read_later ||
@@ -349,17 +489,28 @@ async function markArticleAfterScroll(articleId: number): Promise<void> {
 
 function setupScrollReadObserver(): void {
   scrollReadObserver?.disconnect();
+  const generation = ++scrollReadGeneration;
+  scrollReadSeen.clear();
   if (!listRef.value || !('IntersectionObserver' in window)) return;
 
   scrollReadObserver = new IntersectionObserver(
     (entries) => {
+      if (
+        generation !== scrollReadGeneration ||
+        resettingListScroll.value ||
+        showingPrevious.value ||
+        store.isLoading ||
+        isFilterLoading.value
+      )
+        return;
       for (const entry of entries) {
         const articleId = Number((entry.target as HTMLElement).dataset.articleId);
         if (!articleId) continue;
         if (entry.isIntersecting && entry.intersectionRatio >= 0.6) {
           scrollReadSeen.add(articleId);
         } else if (!entry.isIntersecting && scrollReadSeen.delete(articleId)) {
-          void markArticleAfterScroll(articleId);
+          const top = entry.rootBounds?.top ?? listRef.value?.getBoundingClientRect().top ?? 0;
+          if (entry.boundingClientRect.bottom <= top) void markArticleAfterScroll(articleId);
         }
       }
     },
@@ -369,9 +520,12 @@ function setupScrollReadObserver(): void {
 }
 
 function observeListArticle(element: Element | null, articleId: number): void {
-  observeArticle(element);
   const previous = scrollReadElements.get(articleId);
-  if (previous) scrollReadObserver?.unobserve(previous);
+  if (previous) {
+    scrollReadObserver?.unobserve(previous);
+    unobserveArticle(previous);
+  }
+  observeArticle(element);
   if (!element) {
     scrollReadElements.delete(articleId);
     scrollReadSeen.delete(articleId);
@@ -530,6 +684,7 @@ watch(
       shouldRestoreScroll.value = false; // Disable scroll restoration after refresh
       if (listRef.value) {
         listRef.value.scrollTop = 0;
+        resetArticleListWindow();
       }
     }
   }
@@ -569,6 +724,35 @@ watch(
     if (articleId !== null && aiSearchResults.value.some((article) => article.id === articleId)) {
       temporarilyKeepArticles.value.add(articleId);
     }
+  }
+);
+
+watch(
+  () => [store.currentFeedId, store.currentCategory, store.currentFilter, isAISearchActive.value],
+  () => exitSelectionMode()
+);
+
+watch(
+  () => visibleArticles.value.map((article) => article.id),
+  (visibleIds) => {
+    if (!selectionMode.value || selectedArticleIds.value.size === 0) return;
+    const visible = new Set(visibleIds);
+    const next = new Set([...selectedArticleIds.value].filter((id) => visible.has(id)));
+    if (next.size !== selectedArticleIds.value.size) selectedArticleIds.value = next;
+  }
+);
+
+// Keyboard/detail navigation can move the selection to a row that is outside
+// the rendered window; bring it back in before it is scrolled into view.
+watch(
+  () => store.currentArticleId,
+  async (articleId) => {
+    if (articleId === null) return;
+    await ensureArticleVisible(articleId);
+    if (store.currentArticleId !== articleId) return;
+    listRef.value
+      ?.querySelector<HTMLElement>(`[data-article-id="${articleId}"]`)
+      ?.scrollIntoView({ block: 'nearest' });
   }
 );
 
@@ -688,6 +872,10 @@ function onRefreshTooltipHide(): void {
 // Article selection and interaction
 function selectArticle(article: Article): void {
   if (showingPrevious.value) return;
+  if (selectionMode.value) {
+    toggleArticleSelection(article.id);
+    return;
+  }
   // Check if we should open in browser based on feed or global settings
   const feed = store.feeds.find((f) => f.id === article.feed_id);
   let openInBrowserMode = false;
@@ -753,12 +941,34 @@ let scrollThrottleTimer: ReturnType<typeof setTimeout> | null = null;
 const SCROLL_THROTTLE_DELAY = 200; // 200ms throttle
 const SCROLL_THRESHOLD = 400; // Increased from 200 to 400 for better UX
 
+// Keeps the rendered window in sync on every scroll event; the load-more check
+// stays throttled inside handleScroll.
+function onListScroll(event: Event): void {
+  updateListWindow();
+  handleScroll(event);
+}
+
 function handleScroll(e: Event): void {
+  if (
+    resettingListScroll.value ||
+    showingPrevious.value ||
+    store.isLoading ||
+    isFilterLoading.value
+  )
+    return;
   // Throttle scroll events to improve performance
   if (scrollThrottleTimer) return;
 
   scrollThrottleTimer = setTimeout(() => {
     scrollThrottleTimer = null;
+
+    if (
+      resettingListScroll.value ||
+      showingPrevious.value ||
+      store.isLoading ||
+      isFilterLoading.value
+    )
+      return;
 
     const target = e.target as HTMLElement;
     const { scrollTop, clientHeight, scrollHeight } = target;
@@ -806,60 +1016,72 @@ async function refreshArticles(): Promise<void> {
 }
 
 async function markAllAsRead(): Promise<void> {
-  const confirmed = settings.value.confirm_mark_as_read
-    ? await window.showConfirm({
-        title: t('article.action.markAllReadConfirmTitle'),
-        message: t('article.action.markAllReadConfirmMessage'),
-        confirmText: t('common.confirm'),
-        cancelText: t('common.cancel'),
-        isDanger: false,
-      })
-    : true;
-
-  if (!confirmed) {
+  if (isMarkingAllRead.value || showingPrevious.value || store.isLoading || isFilterLoading.value)
     return;
-  }
+  const feedId = store.currentFeedId ?? undefined;
+  const category = store.currentCategory ?? undefined;
+  const scopedIds =
+    activeFilters.value.length > 0 ||
+    isAISearchActive.value ||
+    store.currentFilter === 'favorites' ||
+    store.currentFilter === 'readLater'
+      ? filteredArticles.value.map((article) => article.id)
+      : null;
+  isMarkingAllRead.value = true;
+  try {
+    const confirmed = settings.value.confirm_mark_as_read
+      ? await window.showConfirm({
+          title: t('article.action.markAllReadConfirmTitle'),
+          message: t('article.action.markAllReadConfirmMessage'),
+          confirmText: t('common.confirm'),
+          cancelText: t('common.cancel'),
+          isDanger: false,
+        })
+      : true;
 
-  // If filters are active, mark only filtered articles as read
-  if (activeFilters.value.length > 0) {
-    try {
-      // Get IDs of filtered articles
-      const articleIds = filteredArticlesFromServer.value.map((a) => a.id);
-      if (articleIds.length === 0) {
-        window.showToast(t('article.action.noArticlesToMark'), 'info');
-        return;
+    if (!confirmed) {
+      return;
+    }
+
+    // If filters are active, mark only filtered articles as read
+    if (scopedIds !== null) {
+      try {
+        // Get IDs of filtered articles
+        const articleIds = scopedIds;
+        if (articleIds.length === 0) {
+          window.showToast(t('article.action.noArticlesToMark'), 'info');
+          return;
+        }
+
+        // Mark all filtered articles as read
+        for (let start = 0; start < articleIds.length; start += 5000) {
+          const ids = articleIds.slice(start, start + 5000);
+          const response = await fetch('/api/articles/read-batch', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ ids, read: true }),
+          });
+          if (!response.ok) throw new Error(`HTTP ${response.status}`);
+          ids.forEach((id) => temporarilyKeepArticles.value.add(id));
+          updateSelectedReadState(new Set(ids), true);
+        }
+        await store.fetchUnreadCounts();
+        await store.fetchFilterCounts();
+        window.showToast(t('article.action.markedAllAsRead'), 'success');
+      } catch (e) {
+        console.error('Error marking filtered articles as read:', e);
+        await Promise.allSettled([store.fetchUnreadCounts(), store.fetchFilterCounts()]);
+        window.showToast(t('article.action.batchReadUpdateFailed'), 'error');
       }
-
-      // Mark all filtered articles as read
-      await Promise.all(
-        articleIds.map((id) => fetch(`/api/articles/read?id=${id}&read=true`, { method: 'POST' }))
-      );
-
-      articleIds.forEach((id) => temporarilyKeepArticles.value.add(id));
-      store.setFilteredArticlesFromServer(
-        filteredArticlesFromServer.value.map((article) => ({ ...article, is_read: true }))
-      );
-      store.articles = store.articles.map((article) =>
-        articleIds.includes(article.id) ? { ...article, is_read: true } : article
-      );
-      await store.fetchUnreadCounts();
-      await store.fetchFilterCounts();
-      window.showToast(t('article.action.markedAllAsRead'), 'success');
-    } catch (e) {
-      console.error('Error marking filtered articles as read:', e);
+    } else {
+      if (await store.markAllAsRead(feedId, feedId === undefined ? category : undefined)) {
+        window.showToast(t('article.action.markedAllAsRead'), 'success');
+      } else {
+        window.showToast(t('article.action.batchReadUpdateFailed'), 'error');
+      }
     }
-  } else {
-    // Use store's markAllAsRead which handles feed and category
-    const params: { feed_id?: number; category?: string } = {};
-
-    if (store.currentFeedId !== null) {
-      params.feed_id = store.currentFeedId;
-    } else if (store.currentCategory !== null) {
-      params.category = store.currentCategory;
-    }
-
-    await store.markAllAsRead(params.feed_id, params.category);
-    window.showToast(t('article.action.markedAllAsRead'), 'success');
+  } finally {
+    isMarkingAllRead.value = false;
   }
 }
 
@@ -912,22 +1134,19 @@ async function openCardModal(article: Article): Promise<void> {
   // Load article content
   try {
     const mediaCacheEnabled = await isMediaCacheEnabled();
-    const res = await fetch(`/api/articles/content?id=${article.id}`);
-    if (res.ok) {
-      const data = await res.json();
-      let content = data.content || '';
-      if (mediaCacheEnabled && content) {
-        content = proxyImagesInHtml(content, article.url);
-      }
-      cardModalContent.value = content;
-    } else {
-      cardModalContent.value = '';
+    const data = await loadArticleContent(article.id);
+    if (cardModalArticle.value?.id !== article.id || !showCardModal.value) return;
+    let content = data.content;
+    if (mediaCacheEnabled && content) {
+      content = proxyImagesInHtml(content, data.feedUrl || article.url);
     }
+    cardModalContent.value = content;
   } catch (e) {
+    if (cardModalArticle.value?.id !== article.id || !showCardModal.value) return;
     console.error('Error loading article content:', e);
     cardModalContent.value = '';
   } finally {
-    isCardModalLoading.value = false;
+    if (cardModalArticle.value?.id === article.id) isCardModalLoading.value = false;
   }
 }
 
@@ -1032,6 +1251,7 @@ async function cardModalReloadContent(): Promise<void> {
     if (!res.ok) {
       throw new Error(t('common.errors.fetchingArticleContent'));
     }
+    invalidateArticleContent(article.id);
     await openCardModal(article);
   } catch (e) {
     console.error('Error reloading article content:', e);
@@ -1077,37 +1297,9 @@ async function reloadArticleOrder(): Promise<void> {
   } else if (!isAISearchActive.value) {
     await store.fetchArticles();
   }
-  if (listRef.value) listRef.value.scrollTop = 0;
-}
-
-// Mark all currently visible articles as read
-async function markAllVisibleAsRead(): Promise<void> {
-  const articleIds = filteredArticles.value.map((a) => a.id);
-
-  if (articleIds.length === 0) {
-    window.showToast(t('article.action.noArticlesToMark'), 'info');
-    return;
-  }
-
-  try {
-    await Promise.all(
-      articleIds.map((id) => fetch(`/api/articles/read?id=${id}&read=true`, { method: 'POST' }))
-    );
-
-    // Update local article states
-    filteredArticles.value.forEach((article) => {
-      article.is_read = true;
-    });
-
-    // Refresh counts
-    await store.fetchUnreadCounts();
-    await store.fetchFilterCounts();
-
-    // Show success message with count
-    const message = t('article.action.markedNArticlesAsRead', { count: articleIds.length });
-    window.showToast(message, 'success');
-  } catch (e) {
-    console.error('Error marking visible articles as read:', e);
+  if (listRef.value) {
+    listRef.value.scrollTop = 0;
+    resetArticleListWindow();
   }
 }
 </script>
@@ -1141,6 +1333,7 @@ async function markAllVisibleAsRead(): Promise<void> {
           <button
             class="text-text-secondary hover:text-text-primary hover:bg-bg-tertiary p-1 sm:p-1.5 rounded transition-colors"
             :title="withShortcut(t('article.action.markAllRead'), 'markAllRead')"
+            :disabled="isMarkingAllRead || store.isLoading || isFilterLoading"
             @click="markAllAsRead"
           >
             <PhCheckCircle :size="18" class="sm:w-5 sm:h-5" />
@@ -1169,10 +1362,15 @@ async function markAllVisibleAsRead(): Promise<void> {
             :report-disabled="
               showingPrevious || store.isLoading || isFilterLoading || visibleArticles.length === 0
             "
+            :selection-disabled="
+              showingPrevious || store.isLoading || isFilterLoading || visibleArticles.length === 0
+            "
+            :selection-active="selectionMode"
             @sort="changeArticleSortOrder"
             @group="changeArticleGrouping"
             @filter="showFilterModal = true"
             @report="reportArticles = [...visibleArticles]"
+            @select="selectionMode ? exitSelectionMode() : enterSelectionMode()"
           />
           <div
             class="relative"
@@ -1315,9 +1513,48 @@ async function markAllVisibleAsRead(): Promise<void> {
           </button>
         </div>
       </div>
+      <div
+        v-if="selectionMode"
+        class="mt-2 flex flex-wrap items-center gap-2 border-t border-border pt-2 text-sm"
+      >
+        <button
+          class="flex items-center gap-1.5 rounded px-2 py-1 text-text-secondary hover:bg-bg-tertiary hover:text-text-primary"
+          :title="t('article.action.selectAllVisible')"
+          @click="toggleAllVisibleArticles"
+        >
+          <PhCheckSquare v-if="allVisibleArticlesSelected" :size="17" weight="fill" />
+          <PhSquare v-else :size="17" />
+          <span>{{ t('article.action.selectedArticles', { count: selectedArticleCount }) }}</span>
+        </button>
+        <div class="ml-auto flex items-center gap-1">
+          <button
+            class="rounded px-2 py-1 text-text-secondary hover:bg-bg-tertiary hover:text-text-primary disabled:cursor-not-allowed disabled:opacity-50"
+            :disabled="selectedArticleCount === 0 || isApplyingSelection"
+            @click="applySelectedReadState(true)"
+          >
+            {{ t('article.action.markAsRead') }}
+          </button>
+          <button
+            class="rounded px-2 py-1 text-text-secondary hover:bg-bg-tertiary hover:text-text-primary disabled:cursor-not-allowed disabled:opacity-50"
+            :disabled="selectedArticleCount === 0 || isApplyingSelection"
+            @click="applySelectedReadState(false)"
+          >
+            {{ t('article.action.markAsUnread') }}
+          </button>
+          <button
+            class="rounded p-1 text-text-secondary hover:bg-bg-tertiary hover:text-text-primary"
+            :title="t('common.cancel')"
+            @click="exitSelectionMode"
+          >
+            <PhX :size="17" />
+          </button>
+        </div>
+      </div>
     </div>
 
     <!-- AI Search Bar -->
+    <TranslationQueueStatus v-if="translationSettings.enabled" class="px-3 py-2" />
+
     <AISearchBar
       v-if="isAISearchEnabled"
       @search="handleAISearchResults"
@@ -1338,7 +1575,7 @@ async function markAllVisibleAsRead(): Promise<void> {
         class="h-full overflow-y-scroll article-list-scroll"
         :class="{ 'pointer-events-none': showingPrevious }"
         :inert="showingPrevious || undefined"
-        @scroll="handleScroll"
+        @scroll="onListScroll"
       >
         <div
           v-if="
@@ -1377,6 +1614,14 @@ async function markAllVisibleAsRead(): Promise<void> {
           {{ t('aiSearch.noResults') }}
         </div>
 
+        <!-- Virtualised list: the rows outside the window are collapsed into spacers -->
+        <div
+          v-if="topSpacerHeight > 0"
+          class="shrink-0"
+          :style="{ height: `${topSpacerHeight}px` }"
+          aria-hidden="true"
+        />
+
         <table
           v-if="isTableMode"
           class="article-table w-full table-fixed border-collapse"
@@ -1398,7 +1643,7 @@ async function markAllVisibleAsRead(): Promise<void> {
             </tr>
           </thead>
           <tbody>
-            <template v-for="article in displayedArticles" :key="article.id">
+            <template v-for="article in windowItems" :key="article.id">
               <tr v-if="groupStarts.has(article.id)" class="bg-bg-secondary text-text-secondary">
                 <th
                   :colspan="tableColumns.length"
@@ -1413,6 +1658,8 @@ async function markAllVisibleAsRead(): Promise<void> {
                 :article="article"
                 :columns="tableColumns"
                 :is-active="store.currentArticleId === article.id"
+                :selection-mode="selectionMode"
+                :selected="selectedArticleIds.has(article.id)"
                 @click="selectArticle(article)"
                 @contextmenu="(event) => handleArticleContextMenu(event, article)"
                 @observe-element="(element) => observeListArticle(element, article.id)"
@@ -1443,7 +1690,7 @@ async function markAllVisibleAsRead(): Promise<void> {
         <!-- Article list with content-visibility for performance -->
         <!-- Card mode: grid layout -->
         <div v-else-if="isCardMode" class="card-grid-container">
-          <template v-for="article in displayedArticles" :key="article.id">
+          <template v-for="article in windowItems" :key="article.id">
             <h4
               v-if="groupStarts.has(article.id)"
               class="col-span-full px-1 py-2 text-sm font-medium text-text-secondary"
@@ -1456,6 +1703,8 @@ async function markAllVisibleAsRead(): Promise<void> {
                 :is-active="
                   cardModalArticle?.id === article.id || recentlyClosedCardId === article.id
                 "
+                :selection-mode="selectionMode"
+                :selected="selectedArticleIds.has(article.id)"
                 @click="selectArticle(article)"
                 @contextmenu="(e) => handleArticleContextMenu(e, article)"
                 @observe-element="(element) => observeListArticle(element, article.id)"
@@ -1496,7 +1745,7 @@ async function markAllVisibleAsRead(): Promise<void> {
         </div>
         <!-- Normal/Compact mode: list layout -->
         <div v-else class="article-list-container">
-          <template v-for="article in displayedArticles" :key="article.id">
+          <template v-for="article in windowItems" :key="article.id">
             <h4
               v-if="groupStarts.has(article.id)"
               class="border-b border-border bg-bg-secondary px-3 py-2 text-sm font-medium text-text-secondary"
@@ -1508,6 +1757,8 @@ async function markAllVisibleAsRead(): Promise<void> {
                 :disabled="showingPrevious"
                 :article="article"
                 :is-active="store.currentArticleId === article.id"
+                :selection-mode="selectionMode"
+                :selected="selectedArticleIds.has(article.id)"
                 @click="selectArticle(article)"
                 @contextmenu="(e) => handleArticleContextMenu(e, article)"
                 @observe-element="(element) => observeListArticle(element, article.id)"
@@ -1548,6 +1799,13 @@ async function markAllVisibleAsRead(): Promise<void> {
           </template>
         </div>
 
+        <div
+          v-if="bottomSpacerHeight > 0"
+          class="shrink-0"
+          :style="{ height: `${bottomSpacerHeight}px` }"
+          aria-hidden="true"
+        />
+
         <!-- Bottom: Mark All Visible as Read button (inserted at end of list) -->
         <Transition
           enter-active-class="transition ease-out duration-200"
@@ -1560,10 +1818,11 @@ async function markAllVisibleAsRead(): Promise<void> {
           <div v-if="shouldShowBottomMarkAllRead" class="mx-3 mb-3 pt-6 pb-3 text-center">
             <button
               class="inline-flex items-center gap-2 px-4 py-2 bg-accent hover:bg-accent/80 text-white rounded-lg transition-colors text-sm font-medium"
-              @click="markAllVisibleAsRead"
+              :disabled="isMarkingAllRead"
+              @click="markAllAsRead"
             >
               <PhCheckCircle :size="18" />
-              <span>{{ t('article.list.markAllVisibleAsRead') }}</span>
+              <span>{{ t('article.action.markAllRead') }}</span>
             </button>
             <div class="text-xs text-text-secondary mt-2">
               {{ t('article.list.allArticlesLoaded') }}
@@ -1642,14 +1901,7 @@ async function markAllVisibleAsRead(): Promise<void> {
 }
 @media (min-width: 768px) {
   .article-list {
-    width: var(--article-list-width, 400px);
-  }
-}
-
-/* Responsive width for article list on medium screens */
-@media (max-width: 1400px) and (min-width: 768px) {
-  .article-list {
-    width: min(var(--article-list-width, 400px), 320px) !important;
+    width: min(var(--article-list-width, 400px), max(280px, calc(100% - 280px)));
   }
 }
 
