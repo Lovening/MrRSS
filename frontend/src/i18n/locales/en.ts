@@ -387,6 +387,9 @@ const en: TranslationMessages = {
       title: 'Title',
     },
     imageViewer: {
+      enterFullscreen: 'Fullscreen (F)',
+      exitFullscreen: 'Exit fullscreen (F / Esc)',
+      fullscreenFailed: 'Could not change fullscreen mode. Try the fullscreen button again.',
       resetZoom: 'Reset zoom',
       zoomIn: 'Zoom In',
       zoomOut: 'Zoom Out',
@@ -801,6 +804,14 @@ const en: TranslationMessages = {
     },
   },
   setting: {
+    advertisement: {
+      label: 'Partner offer · Advertisement',
+      coupon: 'Discount code',
+      discount: 'Enter this code with the partner to receive the advertised discount.',
+      visit: 'Explore AI API offer',
+      snooze: 'Hide offers for one week',
+      saveFailed: 'Could not save your preference. Please try again.',
+    },
     search: {
       clear: 'Clear settings search',
       noResults: 'No matching settings',

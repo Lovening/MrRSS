@@ -367,6 +367,9 @@ const zh: TranslationMessages = {
       title: '标题',
     },
     imageViewer: {
+      enterFullscreen: '全屏（F）',
+      exitFullscreen: '退出全屏（F / Esc）',
+      fullscreenFailed: '无法切换全屏，请重新点击全屏按钮。',
       resetZoom: '恢复默认大小',
       zoomIn: '放大',
       zoomOut: '缩小',
@@ -770,6 +773,14 @@ const zh: TranslationMessages = {
     },
   },
   setting: {
+    advertisement: {
+      label: '合作推荐 · 广告',
+      coupon: '专属优惠码',
+      discount: '在合作中转站填入此优惠码，即可享受广告中说明的折扣。',
+      visit: '了解 AI API 优惠',
+      snooze: '一周内不再提醒',
+      saveFailed: '未能保存免提醒设置，请重试。',
+    },
     search: {
       clear: '清除设置搜索',
       noResults: '没有匹配的设置',
