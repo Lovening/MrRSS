@@ -268,7 +268,7 @@ func (f *Fetcher) parseURLWithContextForFeed(url string, ctx context.Context, fe
 	return parser.ParseURLWithContext(url, ctx)
 }
 
-func (f *Fetcher) FetchAll(ctx context.Context) {
+func (f *Fetcher) FetchAll(ctx context.Context, manual ...bool) {
 	// Get all feeds
 	feeds, err := f.db.GetFeeds()
 	if err != nil {
@@ -354,7 +354,7 @@ func (f *Fetcher) FetchAll(ctx context.Context) {
 	f.taskManager.SetPoolCapacity(concurrency)
 
 	// Use task manager for global refresh (all feeds go to queue tail)
-	f.taskManager.AddGlobalRefresh(ctx, filteredFeeds)
+	f.taskManager.AddGlobalRefresh(ctx, filteredFeeds, manual...)
 }
 
 func (f *Fetcher) FetchFeed(ctx context.Context, feed models.Feed) {
@@ -564,7 +564,7 @@ func (f *Fetcher) cacheArticleContents(articlesWithContent []*ArticleWithContent
 		}
 
 		// Get article ID by unique_id (article was just saved, so it should exist)
-		articleID, err := f.db.GetArticleIDByUniqueID(awc.Article.Title, awc.Article.FeedID, awc.Article.PublishedAt, awc.Article.HasValidPublishedTime)
+		articleID, err := f.db.GetSavedArticleID(awc.Article)
 		if err != nil {
 			// Article might not exist yet (race condition) or other error
 			utils.DebugLog("Could not find article ID for %s: %v", awc.Article.Title, err)

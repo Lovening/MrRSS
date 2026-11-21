@@ -1,12 +1,17 @@
 package article
 
 import (
+	"database/sql"
+	"errors"
+	"fmt"
 	"log"
 	"net/http"
 	"strconv"
+	"strings"
 
 	"MrRSS/internal/handlers/core"
 	"MrRSS/internal/handlers/response"
+	"MrRSS/internal/models"
 )
 
 // HandleArticles returns articles with filtering and pagination.
@@ -17,6 +22,11 @@ import (
 // @Produce      json
 // @Param        filter    query     string  false  "Filter: 'all', 'unread', 'favorite', 'read_later'"  Enums(all, unread, favorite, read_later)
 // @Param        feed_id   query     int64   false  "Filter by feed ID"
+// @Param        feed_ids  query     string  false  "Comma-separated feed IDs (overrides feed_id)"
+// @Param        include_original_summary query bool false "Include the description supplied by the feed"
+// @Param        id        query     int64   false  "Look up one article as a one-item list, independent of filters and pagination"
+// @Failure      400  {object} map[string]string "Invalid article ID"
+// @Failure      404  {object} map[string]string "Article not found"
 // @Param        category  query     string  false  "Filter by category name"
 // @Param        only_unread query   bool    false  "Filter for only unread articles"
 // @Param        sort_order query    string  false  "Publication order: newest or oldest" Enums(newest, oldest)
@@ -27,6 +37,28 @@ import (
 // @Failure      500  {object}  map[string]string  "Internal server error"
 // @Router       /articles [get]
 func HandleArticles(h *core.Handler, w http.ResponseWriter, r *http.Request) {
+	if _, lookup := r.URL.Query()["id"]; lookup {
+		if r.Method != http.MethodGet {
+			response.Error(w, nil, http.StatusMethodNotAllowed)
+			return
+		}
+		id, err := strconv.ParseInt(r.URL.Query().Get("id"), 10, 64)
+		if err != nil || id <= 0 {
+			response.Error(w, fmt.Errorf("invalid article ID"), http.StatusBadRequest)
+			return
+		}
+		item, err := h.DB.GetArticleByIDContext(r.Context(), id)
+		if errors.Is(err, sql.ErrNoRows) {
+			response.Error(w, fmt.Errorf("article not found"), http.StatusNotFound)
+			return
+		}
+		if err != nil {
+			response.Error(w, fmt.Errorf("could not load article"), http.StatusInternalServerError)
+			return
+		}
+		response.JSON(w, []models.Article{*item})
+		return
+	}
 	filter := r.URL.Query().Get("filter")
 	feedIDStr := r.URL.Query().Get("feed_id")
 	pageStr := r.URL.Query().Get("page")
@@ -49,9 +81,18 @@ func HandleArticles(h *core.Handler, w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	var feedID int64
-	if feedIDStr != "" {
-		feedID, _ = strconv.ParseInt(feedIDStr, 10, 64)
+	var feedIDs []int64
+	if raw := r.URL.Query().Get("feed_ids"); raw != "" {
+		for _, value := range strings.Split(raw, ",") {
+			id, err := strconv.ParseInt(value, 10, 64)
+			if err != nil || id <= 0 || len(feedIDs) >= 1000 {
+				response.Error(w, fmt.Errorf("invalid feed_ids"), http.StatusBadRequest)
+				return
+			}
+			feedIDs = append(feedIDs, id)
+		}
+	} else if feedID, err := strconv.ParseInt(feedIDStr, 10, 64); err == nil && feedID > 0 {
+		feedIDs = []int64{feedID}
 	}
 
 	page := 1
@@ -70,7 +111,8 @@ func HandleArticles(h *core.Handler, w http.ResponseWriter, r *http.Request) {
 	showHiddenStr, _ := h.DB.GetSetting("show_hidden_articles")
 	showHidden := showHiddenStr == "true"
 
-	articles, err := h.DB.GetArticlesWithUnreadFilterSorted(filter, feedID, category, showHidden, onlyUnread, sortOrder, limit, offset, r.URL.Query().Get("group_by"))
+	articles, err := h.DB.ListArticles(r.Context(), filter, feedIDs, category, showHidden, onlyUnread,
+		r.URL.Query().Get("include_original_summary") == "true", sortOrder, r.URL.Query().Get("group_by"), limit, offset)
 	if err != nil {
 		response.Error(w, err, http.StatusInternalServerError)
 		return

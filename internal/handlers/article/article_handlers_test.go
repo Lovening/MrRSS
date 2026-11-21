@@ -30,6 +30,73 @@ func setupHandler(t *testing.T) *core.Handler {
 	return core.NewHandler(db, f, nil, nil)
 }
 
+func TestHandleArticlesFiltersMultipleFeedsBeforePagination(t *testing.T) {
+	h := setupHandler(t)
+	defer h.DB.Close()
+	var ids []int64
+	for i := 1; i <= 3; i++ {
+		feedID, err := h.DB.AddFeed(&models.Feed{Title: fmt.Sprintf("Feed %d", i), URL: fmt.Sprintf("https://example.org/feed/%d", i)})
+		if err != nil {
+			t.Fatal(err)
+		}
+		ids = append(ids, feedID)
+		if err := h.DB.SaveArticle(&models.Article{FeedID: feedID, Title: fmt.Sprintf("Story %d", i), URL: fmt.Sprintf("https://example.org/story/%d", i), PublishedAt: time.Unix(int64(i), 0), OriginalSummary: "Description"}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	w := httptest.NewRecorder()
+	query := fmt.Sprintf("?filter=all&feed_ids=%d,%d&limit=1&include_original_summary=true", ids[0], ids[1])
+	article.HandleArticles(h, w, httptest.NewRequest(http.MethodGet, "/api/articles"+query, nil))
+	var got []models.Article
+	if w.Code != http.StatusOK || json.Unmarshal(w.Body.Bytes(), &got) != nil || len(got) != 1 || got[0].FeedID != ids[1] || got[0].OriginalSummary != "Description" {
+		t.Fatalf("unexpected filtered page: %d %s", w.Code, w.Body.String())
+	}
+	w = httptest.NewRecorder()
+	article.HandleArticles(h, w, httptest.NewRequest(http.MethodGet, "/api/articles?feed_ids=1,invalid", nil))
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("invalid feed IDs accepted: %d", w.Code)
+	}
+}
+
+func TestHandleArticlesLookupByID(t *testing.T) {
+	h := setupHandler(t)
+	defer h.DB.Close()
+	feedID, err := h.DB.AddFeed(&models.Feed{Title: "Ticker source", URL: "https://example.org/rss"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	item := &models.Article{FeedID: feedID, Title: "Selected headline", URL: "https://example.org/post", IsRead: true}
+	if err := h.DB.SaveArticle(item); err != nil {
+		t.Fatal(err)
+	}
+	id, err := h.DB.GetSavedArticleID(item)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, tc := range []struct {
+		query  string
+		status int
+	}{
+		{fmt.Sprintf("id=%d&filter=unread&sort_order=oldest&page=999", id), http.StatusOK},
+		{"id=0", http.StatusBadRequest}, {"id=-1", http.StatusBadRequest}, {"id=abc", http.StatusBadRequest}, {"id=999999", http.StatusNotFound},
+	} {
+		w := httptest.NewRecorder()
+		article.HandleArticles(h, w, httptest.NewRequest(http.MethodGet, "/api/articles?"+tc.query, nil))
+		if w.Code != tc.status {
+			t.Fatalf("%s: status=%d body=%s", tc.query, w.Code, w.Body.String())
+		}
+		if w.Code == http.StatusOK {
+			var got []models.Article
+			if err := json.Unmarshal(w.Body.Bytes(), &got); err != nil {
+				t.Fatal(err)
+			}
+			if len(got) != 1 || got[0].ID != id || !got[0].IsRead || got[0].FeedTitle != "Ticker source" {
+				t.Fatalf("wrong selected article: %+v", got)
+			}
+		}
+	}
+}
+
 func TestHandleArticles_ListAndImageGallery(t *testing.T) {
 	h := setupHandler(t)
 

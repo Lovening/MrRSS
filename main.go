@@ -4,6 +4,7 @@ package main
 
 import (
 	"context"
+	"crypto/rand"
 	"embed"
 	"fmt"
 	"io/fs"
@@ -20,6 +21,7 @@ import (
 	"github.com/wailsapp/wails/v3/pkg/application"
 	"github.com/wailsapp/wails/v3/pkg/events"
 
+	"MrRSS/internal/advertisement"
 	"MrRSS/internal/ai"
 	"MrRSS/internal/database"
 	"MrRSS/internal/desktopapi"
@@ -44,6 +46,9 @@ func debugLog(format string, args ...interface{}) {
 	}
 }
 
+//go:embed ads.json
+var bundledAds []byte
+
 //go:embed frontend/dist
 var frontendFiles embed.FS
 
@@ -65,30 +70,16 @@ func getAppIcon() []byte {
 	return appIconMacOS
 }
 
-type CombinedHandler struct {
-	apiMux     *http.ServeMux
-	fileServer http.Handler
-}
-
-func (h *CombinedHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	if strings.HasPrefix(r.URL.Path, "/api/") {
-		h.apiMux.ServeHTTP(w, r)
-		return
-	}
-	h.fileServer.ServeHTTP(w, r)
-}
-
 // APIMiddleware routes API requests to the API handler, and lets Wails handle the rest
-func APIMiddleware(combinedHandler *CombinedHandler) application.Middleware {
+func APIMiddleware(api http.Handler) application.Middleware {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			// Let the /wails route be handled by Wails runtime
-			if strings.HasPrefix(r.URL.Path, "/wails") {
-				next.ServeHTTP(w, r)
+			if strings.HasPrefix(r.URL.Path, "/api/") {
+				api.ServeHTTP(w, r)
 				return
 			}
-			// Handle API routes and serve static files
-			combinedHandler.ServeHTTP(w, r)
+			// Preserve Wails runtime routing and the frontend dev server proxy.
+			next.ServeHTTP(w, r)
 		})
 	}
 }
@@ -159,7 +150,7 @@ func main() {
 
 	log.Printf("Log file: %s", logPath)
 
-	linuxWindowOptions, err := configureLinuxRendering(runtime.GOOS, os.Args[1:])
+	linuxWindowOptions, err := desktopapi.ConfigureLinuxRendering(runtime.GOOS, os.Args[1:])
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -197,8 +188,11 @@ func main() {
 	translator.SetProfileProvider(profileProvider)
 
 	fetcher := feed.NewFetcher(db)
+	bgCtx, bgCancel := context.WithCancel(context.Background())
+	defer bgCancel()
 	h := handlers.NewHandler(db, fetcher, translator, profileProvider)
-	configureAdvertisements(h)
+	h.BackgroundContext = bgCtx
+	h.Advertisements = advertisement.New(bundledAds)
 	h.SetStartupOnBoot = func(enabled bool) error {
 		if enabled {
 			return utils.EnableStartup()
@@ -234,11 +228,11 @@ func main() {
 		log.Fatal(err)
 	}
 
-	fileServer := http.FileServer(http.FS(frontendFS))
+	fileServer := application.BundledAssetFileServer(frontendFS)
 
-	combinedHandler := &CombinedHandler{
-		apiMux:     apiMux,
-		fileServer: fileServer,
+	combinedHandler := &routes.AssetHandler{
+		API:      apiMux,
+		Frontend: fileServer,
 	}
 
 	shouldCloseToTray := func() bool {
@@ -248,7 +242,6 @@ func main() {
 
 	// Start background scheduler
 	log.Println("Starting background scheduler...")
-	bgCtx, bgCancel := context.WithCancel(context.Background())
 
 	// Encryption key for single instance communication (IPC between app instances).
 	// This key is used to encrypt/decrypt messages between first and subsequent instances.
@@ -271,20 +264,24 @@ func main() {
 		hideAfterFullscreen.Store(false)
 		// Read the snapshot before Show/UnMinimise can emit native state events.
 		restoreMaximized := hiddenToTray.Load() && lastMaximized.Load()
-		showExistingWindow(mainWindow, restoreMaximized)
+		desktopapi.ShowExistingWindow(mainWindow, restoreMaximized)
 		hiddenToTray.Store(false)
 	}
 
 	log.Println("Starting Wails v3...")
 
 	// Create new Wails v3 application
+	h.UpdateAuthorization = rand.Text()
+	desktopCapabilities := desktopapi.NewDesktopCapabilities(db, h.UpdateAuthorization, showMainWindow)
 	app := application.New(application.Options{
+		Windows:     desktopapi.WindowOptions(desktopCapabilities),
+		Services:    []application.Service{application.NewService(desktopCapabilities)},
 		Name:        "MrRSS",
 		Description: "A modern, privacy-focused RSS reader",
 		LogLevel:    slog.LevelError,
 		Assets: application.AssetOptions{
 			Handler:    combinedHandler,
-			Middleware: APIMiddleware(combinedHandler),
+			Middleware: APIMiddleware(apiMux),
 		},
 		Mac: application.MacOptions{
 			ApplicationShouldTerminateAfterLastWindowClosed: false,
@@ -306,6 +303,7 @@ func main() {
 	})
 
 	// Set app instance to handler for browser integration
+	desktopapi.Attach(desktopCapabilities, app)
 	h.SetApp(app)
 	h.QuitForUpdate = func() {
 		quitRequested.Store(true)
@@ -465,7 +463,7 @@ func main() {
 
 		trayMenu.Add(refreshLabel).OnClick(func(ctx *application.Context) {
 			if h.Fetcher != nil {
-				go h.Fetcher.FetchAll(bgCtx)
+				go h.Fetcher.FetchAll(bgCtx, true)
 			}
 		})
 
@@ -489,7 +487,13 @@ func main() {
 	})
 
 	mainWindow.RegisterHook(events.Common.WindowClosing, func(e *application.WindowEvent) {
-		if quitRequested.Load() || !shouldCloseToTray() {
+		if quitRequested.Load() || app.Context().Err() != nil {
+			return
+		}
+		if !shouldCloseToTray() {
+			e.Cancel()
+			quitRequested.Store(true)
+			app.Quit()
 			return
 		}
 		e.Cancel()
@@ -618,6 +622,13 @@ func main() {
 	}()
 
 	log.Println("Window initialized, running app...")
+	app.Event.OnApplicationEvent(events.Common.ApplicationStarted, func(_ *application.ApplicationEvent) {
+		if tickerEnabled, _ := db.GetSetting("ticker_enabled"); tickerEnabled == "true" {
+			if err := desktopCapabilities.ShowTicker(); err != nil {
+				log.Printf("Could not open ticker: %v", err)
+			}
+		}
+	})
 
 	// Run the application
 	err = app.Run()
